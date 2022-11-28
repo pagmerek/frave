@@ -11,6 +11,10 @@ fn main() {
         panic!("Failed to open: {}", e);
     });
 
-    let fr: Frave = Frave::new(img, TAME_TWINDRAGON);
-    println!("{}", fr.depth);
+    let mut fr: Frave = Frave::new(img, TAME_TWINDRAGON);
+    //dbg!(fr.center.x, fr.center.y, fr.depth);
+    fr.find_coef();
+    fr.trim_coef(12);
+    fr.find_val();
+    fr.image.save("result.bmp");
 }

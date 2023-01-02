@@ -1,4 +1,5 @@
 use crate::coord::Coord;
+use crate::utils::bitwise;
 use bmp::{Image, Pixel};
 use std::cmp;
 use std::vec;
@@ -87,8 +88,28 @@ impl Frave {
         }
     }
 
-    pub fn quantizate_coef() {
-      self.depth  
+    pub fn quantizate(&mut self) {
+        let total = 1 << self.depth;
+        self.coef = self
+            .coef
+            .iter()
+            .enumerate()
+            .map(|(i, coefficient)| {
+                coefficient / (2 * total / bitwise::get_next_power_two(i as u32))
+            })
+            .collect::<Vec<u32>>();
+    }
+
+    pub fn unquantizate(&mut self) {
+        let total = 1 << self.depth;
+        self.coef = self
+            .coef
+            .iter()
+            .enumerate()
+            .map(|(i, coefficient)| {
+                coefficient * (2*total/bitwise::get_next_power_two(i as u32))
+            })
+            .collect::<Vec<u32>>();
     }
 
     pub fn find_coef(&mut self) {

@@ -14,10 +14,12 @@ fn main() {
     });
     let lattice = trimmer::mirrors(img, 256);
     let mut fr: Frave = Frave::new(lattice, TWINDRAGON);
-    dbg!(fr.depth);
+    //dbg!(fr.depth);
     fr.find_coef();
-    fr.trim_coef(16);
+    fr.quantizate();
+    fr.unquantizate();
+    //fr.trim_coef(16);
     fr.find_val();
-    
-    fr.image.save("result.bmp");
+
+    trimmer::trim(fr.image, 512, 512, 256).save("result.bmp");
 }

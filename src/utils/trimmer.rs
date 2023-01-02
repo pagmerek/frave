@@ -14,7 +14,11 @@ pub fn mirrors(img: Image, frame: u32) -> Image {
             } else if x >= frame && x < w + frame {
                 lattice.set_pixel(x, row as u32, img.get_pixel(x - frame, mirrored_row))
             } else {
-                lattice.set_pixel(x, row as u32, img.get_pixel(2 * w + frame - 1 - x, mirrored_row))
+                lattice.set_pixel(
+                    x,
+                    row as u32,
+                    img.get_pixel(2 * w + frame - 1 - x, mirrored_row),
+                )
             }
         }
     }
@@ -24,7 +28,7 @@ pub fn mirrors(img: Image, frame: u32) -> Image {
 pub fn trim(framed_img: Image, width: u32, height: u32, frame: u32) -> Image {
     let mut image = Image::new(width, height);
     for (x, y) in image.coordinates() {
-        image.set_pixel(x,y,framed_img.get_pixel(x + frame, y + frame))
+        image.set_pixel(x, y, framed_img.get_pixel(x + frame, y + frame))
     }
     image
 }

@@ -13,7 +13,7 @@ fn main() {
         panic!("Failed to open: {}", e);
     });
     let lattice = trimmer::mirrors(img, 256);
-    let mut fr: Frave = Frave::new(lattice, TWINDRAGON);
+    let mut fr: Frave = Frave::new(lattice, TAME_TWINDRAGON);
     //dbg!(fr.depth);
     fr.find_coef();
     fr.quantizate();

@@ -1,20 +1,23 @@
+use crate::frave::Frave;
+use crate::utils::trimmer;
+use crate::variants::*;
 use bmp;
-use frave::Frave;
-use variants::*;
 
 mod coord;
 mod frave;
+mod utils;
 mod variants;
 
 fn main() {
     let img = bmp::open("img/lena.bmp").unwrap_or_else(|e| {
         panic!("Failed to open: {}", e);
     });
-
-    let mut fr: Frave = Frave::new(img, TAME_TWINDRAGON);
-    //dbg!(fr.center.x, fr.center.y, fr.depth);
+    let lattice = trimmer::mirrors(img, 256);
+    let mut fr: Frave = Frave::new(lattice, TWINDRAGON);
+    dbg!(fr.depth);
     fr.find_coef();
-    fr.trim_coef(12);
+    fr.trim_coef(16);
     fr.find_val();
+    
     fr.image.save("result.bmp");
 }

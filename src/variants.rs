@@ -110,7 +110,7 @@ pub static TWINDRAGON: &'static [Coord] = &[
     Coord { x: 0, y: 32768 },
 ];
 
-static BOXES: &'static [Coord] = &[
+pub static BOXES: &'static [Coord] = &[
     Coord { x: 1, y: 0 },
     Coord { x: 0, y: 1 },
     Coord { x: -2, y: 0 },

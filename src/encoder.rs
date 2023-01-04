@@ -7,7 +7,7 @@ use std::vec;
 pub struct Encoder {
     pub width: u32,
     pub height: u32,
-    variant: &'static [Coord],
+    variant: [Coord; 30],
     pub depth: usize,
     pub center: Coord,
     pub image: Image,
@@ -15,7 +15,7 @@ pub struct Encoder {
 }
 
 impl Encoder {
-    pub fn new(image: Image, variant: &'static [Coord]) -> Self {
+    pub fn new(image: Image, variant: [Coord; 30]) -> Self {
         let width: u32 = image.get_width();
         let height: u32 = image.get_height();
         let depth: usize = Self::calculate_depth(width, height, variant);
@@ -53,7 +53,7 @@ impl Encoder {
         )
     }
 
-    fn calculate_depth(img_w: u32, img_h: u32, variant: &'static [Coord]) -> usize {
+    fn calculate_depth(img_w: u32, img_h: u32, variant: [Coord; 30]) -> usize {
         variant
             .into_iter()
             .scan((0, img_w as i32, img_h as i32), |accum, value| {
@@ -69,7 +69,7 @@ impl Encoder {
             .0
     }
 
-    fn find_center(depth: usize, variant: &'static [Coord]) -> Coord {
+    fn find_center(depth: usize, variant: [Coord; 30]) -> Coord {
         variant[0..depth]
             .into_iter()
             .fold(Coord { x: 0, y: 0 }, |accum, value| Coord {

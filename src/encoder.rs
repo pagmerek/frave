@@ -5,13 +5,13 @@ use std::cmp;
 use std::vec;
 
 pub struct Encoder {
-    pub width: u32,
-    pub height: u32,
-    variant: [Coord; 30],
-    pub depth: usize,
-    pub center: Coord,
     pub image: Image,
-    pub coef: Vec<u32>,
+    width: u32,
+    height: u32,
+    variant: [Coord; 30],
+    depth: usize,
+    center: Coord,
+    coef: Vec<u32>,
 }
 
 impl Encoder {
@@ -117,8 +117,8 @@ impl Encoder {
             3,
             self.depth - 2,
         );
-        self.coef[1] = rt - lt;
-        self.coef[0] = rt + lt;
+        self.coef[1] = rt.wrapping_sub(lt);
+        self.coef[0] = rt.wrapping_add(lt);
     }
 
     fn fn_cf(&mut self, cn: Coord, ps: usize, dp: usize) -> u32 {
@@ -130,8 +130,8 @@ impl Encoder {
             lt = self.get_pixel(cn.x, cn.y);
             rt = self.get_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y);
         }
-        self.coef[ps] = (rt as i32 - lt as i32) as u32;
-        rt + lt
+        self.coef[ps] = rt.wrapping_sub(lt);
+        rt.wrapping_add(lt)
     }
 
     pub fn find_val(&mut self) {
@@ -140,8 +140,8 @@ impl Encoder {
 
     fn fn_vl(&mut self, sum: u32, ps: usize, cn: Coord, dp: usize) {
         let dif: u32 = self.coef[ps];
-        let lt: u32 = (sum as i32 - dif as i32) as u32 >> 1;
-        let rt: u32 = (sum as i32 + dif as i32) as u32 >> 1;
+        let lt: u32 = sum.wrapping_sub(dif) >> 1;
+        let rt: u32 = sum.wrapping_add(dif) >> 1;
         if dp > 0 {
             self.fn_vl(lt, ps << 1, cn, dp - 1);
             self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1)

@@ -12,8 +12,8 @@ mod variants;
 fn main() {
     let cli = Cli::parse();
     match &cli.command {
-        Commands::Encode(cmd) => encode(cmd.bmp_path, cmd.variant),
-        Commands::Decode(cmd) => decode(cmd.fr_path, cmd.variant),
-        Commands::Fractalize(cmd) => fractalize(cmd.bmp_path, cmd.amount, cmd.variant),
+        Commands::Encode(cmd) => encode(cmd.bmp_path.clone(), cmd.variant, cmd.output.clone()),        
+        Commands::Decode(cmd) => decode(cmd.fr_path.clone(), cmd.variant, cmd.output.clone()),
+        Commands::Fractalize(cmd) => fractalize(cmd.bmp_path.clone(), cmd.amount, cmd.variant, cmd.output.clone()),
     }
 }

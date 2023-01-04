@@ -3,15 +3,15 @@ use crate::utils::trimmer::{mirrors, trim};
 use crate::variants::{get_variant, Variant};
 use bmp;
 
-fn encode(path: std::path::PathBuf, var: Variant) {
+pub fn encode(path: std::path::PathBuf, var: Variant, output: String) {
     unimplemented!();
 }
 
-fn decode(path: std::path::PathBuf, var: Variant) {
+pub fn decode(path: std::path::PathBuf, var: Variant, output: String) {
     unimplemented!();
 }
 
-fn fractalize(path: std::path::PathBuf, amount: usize, var: Variant) {
+pub fn fractalize(path: std::path::PathBuf, amount: usize, var: Variant, output: String) {
     let img = bmp::open(path).unwrap_or_else(|e| {
         panic!("Failed to open: {}", e);
     });
@@ -23,7 +23,7 @@ fn fractalize(path: std::path::PathBuf, amount: usize, var: Variant) {
     enc.find_val();
 
     let _ = trim(enc.image, 512, 512, 256)
-        .save("result.bmp")
+        .save(output)
         .unwrap_or_else(|e| {
             panic!("Failed to save: {}", e);
         });

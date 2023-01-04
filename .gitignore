@@ -10,6 +10,11 @@ Cargo.lock
 **/*.rs.bk
 
 /img
+
+*.bmp
+
+# frave data format
+*.fr
 # Added by cargo
 
 /target

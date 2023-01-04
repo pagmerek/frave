@@ -1,0 +1,20 @@
+name: frave
+version: "1.0"
+author: P. Gmerek <p.gmerek7@gmail.com>
+about: Image compression program based on complex based numeral systems.
+subcommands:
+    - encode:
+        about: Encodes bitmap file to the frave format
+        args:
+            - INPUT:
+                help: Sets the input file to encode. Only .bmp are supported
+                required: true
+                index: 1 
+    - decode:
+        about: Decodes fr file to bitmap format
+        args:
+            - INPUT:
+                help: Sets the input.fr file to decode.
+                required: true
+                index: 1 
+

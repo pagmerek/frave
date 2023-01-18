@@ -1,7 +1,8 @@
 use crate::coord::Coord;
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, Serialize, Deserialize)]
 pub enum Variant {
     Boxes,
     Twindragon,
@@ -79,6 +80,7 @@ pub fn get_variant(var: Variant) -> [Coord; 30] {
             },
         ],
         Variant::TameTwindragon => [
+
             Coord { x: 0, y: 1 },
             Coord { x: -1, y: 1 },
             Coord { x: 2, y: 0 },
@@ -114,7 +116,6 @@ pub fn get_variant(var: Variant) -> [Coord; 30] {
             },
         ],
         Variant::SkewedTameTwindragon => [
-            Coord { x: -1, y: 0 },
             Coord { x: 1, y: 1 },
             Coord { x: -1, y: -2 },
             Coord { x: 3, y: 2 },
@@ -147,6 +148,7 @@ pub fn get_variant(var: Variant) -> [Coord; 30] {
                 y: -16558,
             },
             Coord { x: 24475, y: 15834 },
+            Coord { x: -1, y: 0 },
         ],
     }
 }

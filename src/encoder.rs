@@ -1,23 +1,30 @@
-use crate::coord::Coord;
-use crate::utils::bitwise;
-use bmp::{Image, Pixel};
 use std::cmp;
+use std::collections::HashMap;
 use std::vec;
 
+use image::{GrayImage};
+use rans::b64_encoder::B64RansEncoderMulti;
+use rans::RansEncoderMulti;
+
+use crate::coord::Coord;
+use crate::utils::ans;
+use crate::utils::bitwise;
+use itertools::Itertools;
+
 pub struct Encoder {
-    pub image: Image,
-    width: u32,
-    height: u32,
+    pub image: GrayImage,
+    pub width: u32,
+    pub height: u32,
+    pub depth: usize,
+    pub center: Coord,
+    pub coef: Vec<u32>,
     variant: [Coord; 30],
-    depth: usize,
-    center: Coord,
-    coef: Vec<u32>,
 }
 
 impl Encoder {
-    pub fn new(image: Image, variant: [Coord; 30]) -> Self {
-        let width: u32 = image.get_width();
-        let height: u32 = image.get_height();
+    pub fn new(image: GrayImage, variant: [Coord; 30]) -> Self {
+        let width: u32 = image.width();
+        let height: u32 = image.height();
         let depth: usize = Self::calculate_depth(width, height, variant);
 
         Encoder {
@@ -33,24 +40,10 @@ impl Encoder {
 
     #[inline]
     pub fn get_pixel(&self, x: i32, y: i32) -> u32 {
-        let Pixel { r, g: _, b: _ } = self
+        let [gray] = self
             .image
-            .get_pixel(x as u32 % self.width, y as u32 % self.width); // we assume grayscale for now
-        r as u32
-    }
-
-    #[inline]
-    pub fn set_pixel(&mut self, x: i32, y: i32, v: u32) -> () {
-        let gray: u8 = cmp::max(0, cmp::min(v, 255)) as u8;
-        self.image.set_pixel(
-            x as u32 % self.width,
-            y as u32 % self.height,
-            Pixel {
-                r: gray,
-                g: gray,
-                b: gray,
-            },
-        )
+            .get_pixel(x as u32 % self.width, y as u32 % self.height).0; // we assume grayscale for now
+         gray as u32
     }
 
     fn calculate_depth(img_w: u32, img_h: u32, variant: [Coord; 30]) -> usize {
@@ -85,31 +78,6 @@ impl Encoder {
             self.coef = x;
         }
     }
-
-    pub fn quantizate(&mut self) {
-        let total = 1 << self.depth;
-        self.coef = self
-            .coef
-            .iter()
-            .enumerate()
-            .map(|(i, coefficient)| {
-                coefficient / (2 * total / bitwise::get_next_power_two(i as u32))
-            })
-            .collect::<Vec<u32>>();
-    }
-
-    pub fn unquantizate(&mut self) {
-        let total = 1 << self.depth;
-        self.coef = self
-            .coef
-            .iter()
-            .enumerate()
-            .map(|(i, coefficient)| {
-                coefficient * (2 * total / bitwise::get_next_power_two(i as u32))
-            })
-            .collect::<Vec<u32>>();
-    }
-
     pub fn find_coef(&mut self) {
         let lt: u32 = self.fn_cf(self.center.clone(), 2, self.depth - 2);
         let rt: u32 = self.fn_cf(
@@ -117,7 +85,7 @@ impl Encoder {
             3,
             self.depth - 2,
         );
-        self.coef[1] = rt.wrapping_sub(lt);
+        self.coef[1] = rt.saturating_sub(lt);
         self.coef[0] = rt.wrapping_add(lt);
     }
 
@@ -130,8 +98,80 @@ impl Encoder {
             lt = self.get_pixel(cn.x, cn.y);
             rt = self.get_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y);
         }
-        self.coef[ps] = rt.wrapping_sub(lt);
+        self.coef[ps] = rt.saturating_sub(lt);
         rt.wrapping_add(lt)
+    }
+
+    pub fn quantizate(&mut self) {
+        let total = 1 << self.depth;
+        self.coef = self
+            .coef
+            .iter()
+            .enumerate()
+            .map(|(i, coefficient)| {
+                let layer: u32 = bitwise::get_next_power_two(i as u32).trailing_zeros();
+                //dbg!(i, layer, &self.depth,coefficient, coefficient / ((2 as f64).sqrt() as u32).pow(2*layer) );
+                coefficient / ((2u32.pow(layer) as f64).sqrt() as u32) 
+            })
+            .collect::<Vec<u32>>();
+    }
+
+    pub fn ans_encode(&self) -> (Vec<u8>, Vec<ans::AnsContext>) {
+        let layer1 = &self.coef[1 << (self.depth - 1)..];
+        let layer2 = &self.coef[1 << (self.depth - 2)..1 << (self.depth - 1)];
+        let layer3 = &self.coef[..1 << (self.depth - 2)];
+
+        let mut encoder: B64RansEncoderMulti<3> = B64RansEncoderMulti::new(1 << self.depth);
+        let mut contexts: Vec<ans::AnsContext> = vec![];
+
+        for (i, layer) in [layer1, layer2, layer3].iter().enumerate() {
+            let counter = layer.into_iter().counts();
+            let freq = counter.values().map(|e| *e as u32).collect::<Vec<u32>>();
+            let symbols = counter.keys().map(|e| **e as u32).collect::<Vec<u32>>();
+            let cum_freq = ans::cum_sum(&freq);
+
+            let symbol_map = ans::freqs_to_enc_symbols(&cum_freq, &freq, self.depth);
+
+            let cum_freq_map = counter
+                .clone()
+                .into_keys()
+                .map(|e| e.to_owned())
+                .zip(cum_freq.clone())
+                .collect::<HashMap<u32, u32>>();
+
+            layer
+                .iter()
+                .rev()
+                .for_each(|s| encoder.put_at(i, &symbol_map[&cum_freq_map[s]]));
+
+            contexts.push(ans::AnsContext { symbols, freq });
+        }
+        encoder.flush_all();
+
+        (encoder.data().to_owned(), contexts)
+    }
+
+    #[inline]
+    pub fn set_pixel(&mut self, x: i32, y: i32, v: u32) -> () {
+        let gray: u8 = cmp::max(0, cmp::min(v, 255)) as u8;
+        self.image.put_pixel(
+            x as u32 % self.width,
+            y as u32 % self.height,
+              image::Luma([gray]) 
+        )
+    }
+
+    pub fn unquantizate(&mut self) {
+        let total = 1 << self.depth;
+        self.coef = self
+            .coef
+            .iter()
+            .enumerate()
+            .map(|(i, coefficient)| {
+                let layer: u32 = bitwise::get_next_power_two(i as u32).trailing_zeros();
+                coefficient * ((2u32.pow(layer) as f64).sqrt() as u32)
+            })
+            .collect::<Vec<u32>>();
     }
 
     pub fn find_val(&mut self) {
@@ -150,4 +190,5 @@ impl Encoder {
             self.set_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y, rt);
         }
     }
+
 }

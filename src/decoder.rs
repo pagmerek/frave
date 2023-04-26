@@ -7,6 +7,7 @@ use rans::RansDecoderMulti;
 
 use crate::coord::Coord;
 use crate::frave_image::FraveImage;
+use crate::frave_image::get_quantization_matrix;
 use crate::utils::ans;
 use crate::utils::bitwise;
 use crate::variants::get_variant;
@@ -16,8 +17,8 @@ pub struct Decoder {
     height: u32,
     variant: [Coord; 30],
     depth: usize,
-    center: Coord,
-    coef: Vec<u32>,
+    pub center: Coord,
+    coef: Vec<i32>,
     pub image: GrayImage,
 }
 
@@ -43,7 +44,7 @@ impl Decoder {
                 .iter()
                 .map(|e| e.to_owned())
                 .zip(ctxs[2 - i].symbols.clone())
-                .collect::<HashMap<u32, u32>>();
+                .collect::<HashMap<u32, i32>>();
 
             let mut cum_freqs_sorted = cum_freqs.to_owned();
             cum_freqs_sorted.sort();
@@ -72,7 +73,7 @@ impl Decoder {
     }
 
     #[inline]
-    pub fn set_pixel(&mut self, x: i32, y: i32, v: u32) -> () {
+    pub fn set_pixel(&mut self, x: i32, y: i32, v: i32) -> () {
         let gray: u8 = cmp::max(0, cmp::min(v, 255)) as u8;
         self.image.put_pixel(
             x as u32 % self.width,
@@ -82,26 +83,27 @@ impl Decoder {
     }
 
     pub fn unquantizate(&mut self) {
-        let total = 1 << self.depth;
+        let quantization_matrix = get_quantization_matrix();
         self.coef = self
             .coef
             .iter()
             .enumerate()
             .map(|(i, coefficient)| {
-                let layer: u32 = bitwise::get_next_power_two(i as u32).trailing_zeros();
-                coefficient * ((2u32.pow(layer) as f64).sqrt() as u32)
+                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
+                // dbg!(layer, i);
+                (*coefficient as f64 * quantization_matrix[layer as usize]).floor() as i32
             })
-            .collect::<Vec<u32>>();
+            .collect::<Vec<i32>>();
     }
 
     pub fn find_val(&mut self) {
         self.fn_vl(self.coef[0], 1, self.center, self.depth - 1);
     }
 
-    fn fn_vl(&mut self, sum: u32, ps: usize, cn: Coord, dp: usize) {
-        let dif: u32 = self.coef[ps];
-        let lt: u32 = sum.wrapping_sub(dif) >> 1;
-        let rt: u32 = sum.wrapping_add(dif) >> 1;
+    fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize) {
+        let dif: i32 = self.coef[ps];
+        let lt: i32 = (sum - dif) >> 1;
+        let rt: i32 = (sum + dif) >> 1;
         if dp > 0 {
             self.fn_vl(lt, ps << 1, cn, dp - 1);
             self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1)

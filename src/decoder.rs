@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
+use image::GrayImage;
 use rans::b64_decoder::B64RansDecoderMulti;
 use rans::RansDecoderMulti;
 
 use crate::coord::Coord;
+use crate::frave_image::get_quantization_matrix;
 use crate::frave_image::FraveImage;
 use crate::utils::ans;
 use crate::utils::ans::AnsContext;

@@ -4,7 +4,6 @@ version = "0.1.0"
 about = "Image compression program based on complex based numeral systems"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 itertools = "0.10.5"
 clap = { version = "4.0.32", features = ["derive"] }

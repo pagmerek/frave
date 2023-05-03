@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use crate::decoder::Decoder;
 use crate::encoder::Encoder;
 use crate::frave_image::FraveImage;
-use crate::utils::trimmer::{mirrors};
 use crate::variants::{get_variant, Variant};
 
 pub fn encode(path: PathBuf, var: Variant, output: String) {

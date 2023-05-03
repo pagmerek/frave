@@ -102,8 +102,8 @@ impl Decoder {
 
     fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize) {
         let dif: i32 = self.coef[ps];
-        let lt: i32 = (sum - dif) >> 1;
-        let rt: i32 = (sum + dif) >> 1;
+        let lt: i32 = ((sum - dif)*2) >> 1;
+        let rt: i32 = ((sum + dif)*2) >> 1;
         if dp > 0 {
             self.fn_vl(lt, ps << 1, cn, dp - 1);
             self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1)

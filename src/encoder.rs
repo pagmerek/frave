@@ -87,8 +87,8 @@ impl Encoder {
             3,
             self.depth - 2,
         );
-        self.coef[1] = rt - lt;
-        self.coef[0] = rt.wrapping_add(lt);
+        self.coef[1] = (rt - lt)/2;
+        self.coef[0] = rt.wrapping_add(lt)/2;
     }
 
     fn fn_cf(&mut self, cn: Coord, ps: usize, dp: usize) -> i32 {
@@ -100,12 +100,13 @@ impl Encoder {
             lt = self.get_pixel(cn.x, cn.y);
             rt = self.get_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y);
         }
-        self.coef[ps] = rt - lt;
-        rt + lt
+        self.coef[ps] = (rt - lt)/2;
+        (rt + lt)/2
     }
 
     pub fn quantizate(&mut self) {
         let quantization_matrix = get_quantization_matrix();
+        dbg!(self.coef.iter().minmax());
         self.coef = self
             .coef
             .iter()

@@ -80,7 +80,6 @@ pub fn get_variant(var: Variant) -> [Coord; 30] {
             },
         ],
         Variant::TameTwindragon => [
-
             Coord { x: 0, y: 1 },
             Coord { x: -1, y: 1 },
             Coord { x: 2, y: 0 },

@@ -2,14 +2,14 @@ use std::cmp;
 use std::collections::HashMap;
 use std::vec;
 
-use image::{GrayImage};
+use image::GrayImage;
 use rans::b64_encoder::B64RansEncoderMulti;
 use rans::RansEncoderMulti;
 
 use crate::coord::Coord;
+use crate::frave_image::get_quantization_matrix;
 use crate::utils::ans;
 use crate::utils::bitwise;
-use crate::frave_image::get_quantization_matrix;
 use itertools::Itertools;
 
 pub struct Encoder {
@@ -44,8 +44,9 @@ impl Encoder {
     pub fn get_pixel(&self, x: i32, y: i32) -> i32 {
         let [gray] = self
             .image
-            .get_pixel(x as u32 % self.width, y as u32 % self.height).0; // we assume grayscale for now
-         gray as i32
+            .get_pixel(x as u32 % self.width, y as u32 % self.height)
+            .0; // we assume grayscale for now
+        gray as i32
     }
 
     fn calculate_depth(img_w: u32, img_h: u32, variant: [Coord; 30]) -> usize {
@@ -61,12 +62,12 @@ impl Encoder {
             })
             .find(|&(_i, rw, rh)| rw <= 0 && rh <= 0)
             .unwrap()
-            .0 
+            .0
     }
 
     fn find_center(depth: usize, variant: [Coord; 30]) -> Coord {
         variant[0..depth]
-            .into_iter()
+            .iter()
             .fold(Coord { x: 0, y: 0 }, |accum, value| Coord {
                 x: accum.x - cmp::min(0, value.x),
                 y: accum.y - cmp::min(0, value.y),
@@ -75,20 +76,20 @@ impl Encoder {
 
     pub fn trim_coef(&mut self, dp: usize) {
         if dp < self.depth {
-            let mut x = (&self.coef[0..(1 << dp)]).to_vec();
+            let mut x = self.coef[0..(1 << dp)].to_vec();
             x.extend(vec![0; (1 << self.depth) - (1 << dp)]);
             self.coef = x;
         }
     }
     pub fn find_coef(&mut self) {
-        let lt: i32 = self.fn_cf(self.center.clone(), 2, self.depth - 2);
+        let lt: i32 = self.fn_cf(self.center, 2, self.depth - 2);
         let rt: i32 = self.fn_cf(
-            (self.center + self.variant[self.depth - 1]).clone(),
+            self.center + self.variant[self.depth - 1],
             3,
             self.depth - 2,
         );
-        self.coef[1] = (rt - lt)/2;
-        self.coef[0] = rt.wrapping_add(lt)/2;
+        self.coef[1] = (rt - lt) / 2;
+        self.coef[0] = rt.wrapping_add(lt) / 2;
     }
 
     fn fn_cf(&mut self, cn: Coord, ps: usize, dp: usize) -> i32 {
@@ -100,8 +101,8 @@ impl Encoder {
             lt = self.get_pixel(cn.x, cn.y);
             rt = self.get_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y);
         }
-        self.coef[ps] = (rt - lt)/2;
-        (rt + lt)/2
+        self.coef[ps] = (rt - lt) / 2;
+        (rt + lt) / 2
     }
 
     pub fn quantizate(&mut self) {
@@ -113,7 +114,19 @@ impl Encoder {
             .enumerate()
             .map(|(i, coefficient)| {
                 let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
-                (*coefficient as f64 / quantization_matrix[layer as usize]).floor() as i32
+                *coefficient / quantization_matrix[layer as usize]
+            })
+            .collect::<Vec<i32>>();
+    }
+
+    pub fn quantizate_with_matrix(&mut self, quantization_matrix: &[i32]) {
+        self.coef = self
+            .coef
+            .iter()
+            .enumerate()
+            .map(|(i, coefficient)| {
+                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
+                *coefficient / quantization_matrix[layer as usize]
             })
             .collect::<Vec<i32>>();
     }
@@ -127,29 +140,29 @@ impl Encoder {
         let mut contexts: Vec<ans::AnsContext> = vec![];
 
         for (i, layer) in [layer1, layer2, layer3].iter().enumerate() {
-            let counter = layer.into_iter().counts();
+            let counter = layer.iter().counts();
             let freq = counter.values().map(|e| *e as u32).collect::<Vec<u32>>();
             let symbols = counter.keys().map(|e| **e as i32).collect::<Vec<i32>>();
-            let cum_freq = ans::cum_sum(&freq);
+            let cdf = ans::cum_sum(&freq);
 
-            let symbol_map = ans::freqs_to_enc_symbols(&cum_freq, &freq, self.depth);
+            let symbol_map = ans::freqs_to_enc_symbols(&cdf, &freq, self.depth);
 
-            let cum_freq_map = counter
+            let cdf_map = counter
                 .clone()
                 .into_keys()
                 .map(|e| e.to_owned())
-                .zip(cum_freq.clone())
+                .zip(cdf.clone())
                 .collect::<HashMap<i32, u32>>();
 
             layer
                 .iter()
                 .rev()
-                .for_each(|s| encoder.put_at(i, &symbol_map[&cum_freq_map[s]]));
+                .for_each(|s| encoder.put_at(i, &symbol_map[&cdf_map[s]]));
 
             contexts.push(ans::AnsContext { symbols, freq });
         }
         encoder.flush_all();
-        
+
         (encoder.data().to_owned(), contexts)
     }
 }

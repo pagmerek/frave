@@ -10,8 +10,7 @@ pub fn encode(path: PathBuf, var: Variant, output: String) {
     let img = image::open(path).unwrap_or_else(|e| {
         panic!("Failed to open: {}", e);
     });
-    // let lattice = mirrors(img, 256);
-    
+
     let mut enc = Encoder::new(img.into_luma8(), get_variant(var));
     enc.find_coef();
     enc.quantizate();
@@ -37,24 +36,7 @@ pub fn decode(path: PathBuf, output: String) {
     let mut dec = Decoder::new(frv_img);
     dec.unquantizate();
     dec.find_val();
-    let _ = dec.image.save(output).unwrap_or_else(|e| {
+    dec.image.save(output).unwrap_or_else(|e| {
         panic!("Failed to save: {}", e);
     });
-}
-
-pub fn fractalize(path: PathBuf, amount: usize, var: Variant, output: String) {
-    let img = image::open(path).unwrap_or_else(|e| {
-        panic!("Failed to open: {}", e);
-    });
-    //let lattice = mirrors(img.into_luma8(), 256);
-
-    // let mut enc = Encoder::new(img.into_luma8(), get_variant(var));
-    // enc.find_coef();
-    // enc.trim_coef(amount);
-    // enc.find_val();
-    //
-    // let _ = enc.image.save(output)
-    //     .unwrap_or_else(|e| {
-    //         panic!("Failed to save: {}", e);
-    //     });
 }

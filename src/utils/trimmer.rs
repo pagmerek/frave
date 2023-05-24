@@ -25,10 +25,4 @@ pub fn mirrors(img: GrayImage, frame: u32) -> GrayImage {
     lattice
 }
 
-// pub fn trim(framed_img: GrayImage, width: u32, height: u32, frame: u32) -> GrayImage {
-//     let mut image = GrayImage::new(width, height);
-//     for (x, y, _) in image.enumerate_pixels_mut() {
-//         image.put_pixel(x, y, *framed_img.get_pixel(x + frame, y + frame))
-//     }
-//     image
-// }
+

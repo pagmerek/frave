@@ -16,7 +16,6 @@ pub struct Cli {
 pub enum Commands {
     Decode(Decode),
     Encode(Encode),
-    Fractalize(Fractalize),
 }
 
 #[derive(Args)]
@@ -37,20 +36,5 @@ pub struct Decode {
     pub fr_path: PathBuf,
 
     #[arg(short, default_value_t = String::from("a.bmp"))]
-    pub output: String,
-}
-
-#[derive(Args)]
-/// Transforms bitmap file applying frave without quantization
-pub struct Fractalize {
-    pub bmp_path: PathBuf,
-
-    #[arg(short, long, value_enum, default_value_t = Variant::TameTwindragon)]
-    pub variant: Variant,
-
-    #[arg(short, long)]
-    pub amount: usize,
-
-    #[arg(short, long, default_value_t = String::from("a.bmp"))]
     pub output: String,
 }

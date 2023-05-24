@@ -1,13 +1,13 @@
 use std::cmp;
 use std::collections::HashMap;
 
-use image::{GrayImage};
+use image::GrayImage;
 use rans::b64_decoder::B64RansDecoderMulti;
 use rans::RansDecoderMulti;
 
 use crate::coord::Coord;
-use crate::frave_image::FraveImage;
 use crate::frave_image::get_quantization_matrix;
+use crate::frave_image::FraveImage;
 use crate::utils::ans;
 use crate::utils::bitwise;
 use crate::variants::get_variant;
@@ -49,7 +49,7 @@ impl Decoder {
             let mut cum_freqs_sorted = cum_freqs.to_owned();
             cum_freqs_sorted.sort();
 
-            for _ in layer.to_owned() {
+            for _l in layer.clone() {
                 let cum_freq_decoded =
                     ans::find_nearest_or_equal(decoder.get_at(i, scale_bits), &cum_freqs_sorted);
                 let symbol = symbol_map[&cum_freq_decoded];
@@ -59,9 +59,9 @@ impl Decoder {
             }
         }
         Decoder {
-            width: width,
-            height:height,
-            depth: depth,
+            width,
+            height,
+            depth,
             center: Coord {
                 x: frv.center.0,
                 y: frv.center.1,
@@ -73,12 +73,12 @@ impl Decoder {
     }
 
     #[inline]
-    pub fn set_pixel(&mut self, x: i32, y: i32, v: i32) -> () {
+    pub fn set_pixel(&mut self, x: i32, y: i32, v: i32) {
         let gray: u8 = cmp::max(0, cmp::min(v, 255)) as u8;
         self.image.put_pixel(
             x as u32 % self.width,
             y as u32 % self.height,
-              image::Luma([gray]) 
+            image::Luma([gray]),
         )
     }
 
@@ -90,8 +90,19 @@ impl Decoder {
             .enumerate()
             .map(|(i, coefficient)| {
                 let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
-                // dbg!(layer, i);
-                (*coefficient as f64 * quantization_matrix[layer as usize]).floor() as i32
+                *coefficient * quantization_matrix[layer as usize]
+            })
+            .collect::<Vec<i32>>();
+    }
+
+    pub fn unquantizate_with_matrix(&mut self, quantization_matrix: &[i32]) {
+        self.coef = self
+            .coef
+            .iter()
+            .enumerate()
+            .map(|(i, coefficient)| {
+                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
+                *coefficient * quantization_matrix[layer as usize]
             })
             .collect::<Vec<i32>>();
     }
@@ -102,8 +113,8 @@ impl Decoder {
 
     fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize) {
         let dif: i32 = self.coef[ps];
-        let lt: i32 = ((sum - dif)*2) >> 1;
-        let rt: i32 = ((sum + dif)*2) >> 1;
+        let lt: i32 = ((sum - dif) * 2) >> 1;
+        let rt: i32 = ((sum + dif) * 2) >> 1;
         if dp > 0 {
             self.fn_vl(lt, ps << 1, cn, dp - 1);
             self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1)
@@ -111,5 +122,9 @@ impl Decoder {
             self.set_pixel(cn.x, cn.y, lt);
             self.set_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y, rt);
         }
+    }
+
+    fn ans_decode() {
+
     }
 }

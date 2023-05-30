@@ -1,87 +1,25 @@
-use std::cmp;
 use std::collections::HashMap;
 use std::vec;
 
-use image::GrayImage;
 use rans::b64_encoder::B64RansEncoderMulti;
 use rans::RansEncoderMulti;
 
 use crate::coord::Coord;
-use crate::frave_image::get_quantization_matrix;
+use crate::frave_image::FraveImage;
 use crate::utils::ans;
+use crate::utils::ans::AnsContext;
 use crate::utils::bitwise;
 use itertools::Itertools;
 
-pub struct Encoder {
-    pub image: GrayImage,
-    pub width: u32,
-    pub height: u32,
-    pub depth: usize,
-    pub center: Coord,
-    pub coef: Vec<i32>,
-    variant: [Coord; 30],
+pub trait Encoder {
+    fn find_coef(&mut self);
+    fn fn_cf(&mut self, cn: Coord, ps: usize, dp: usize) -> i32;
+    fn quantizate(&mut self, quantization_matrix: &[i32]);
+    fn ans_encode(&self) -> (Vec<u8>, Vec<AnsContext>);
 }
 
-impl Encoder {
-    pub fn new(image: GrayImage, variant: [Coord; 30]) -> Self {
-        let width: u32 = image.width();
-        let height: u32 = image.height();
-        let depth: usize = Self::calculate_depth(width, height, variant);
-        dbg!(depth);
-
-        Encoder {
-            width,
-            height,
-            depth,
-            center: Self::find_center(depth, variant),
-            coef: vec![0; 1 << depth],
-            image,
-            variant,
-        }
-    }
-
-    #[inline]
-    pub fn get_pixel(&self, x: i32, y: i32) -> i32 {
-        let [gray] = self
-            .image
-            .get_pixel(x as u32 % self.width, y as u32 % self.height)
-            .0; // we assume grayscale for now
-        gray as i32
-    }
-
-    fn calculate_depth(img_w: u32, img_h: u32, variant: [Coord; 30]) -> usize {
-        variant
-            .into_iter()
-            .scan((0, img_w as i32, img_h as i32), |accum, value| {
-                *accum = (
-                    accum.0 + 1,
-                    accum.1 - value.x.abs(),
-                    accum.2 - value.y.abs(),
-                );
-                Some(*accum)
-            })
-            .find(|&(_i, rw, rh)| rw <= 0 && rh <= 0)
-            .unwrap()
-            .0
-    }
-
-    fn find_center(depth: usize, variant: [Coord; 30]) -> Coord {
-        variant[0..depth]
-            .iter()
-            .fold(Coord { x: 0, y: 0 }, |accum, value| Coord {
-                x: accum.x - cmp::min(0, value.x),
-                y: accum.y - cmp::min(0, value.y),
-            })
-    }
-
-    pub fn trim_coef(&mut self, dp: usize) {
-        if dp < self.depth {
-            let mut x = self.coef[0..(1 << dp)].to_vec();
-            x.extend(vec![0; (1 << self.depth) - (1 << dp)]);
-            self.coef = x;
-        }
-    }
-    pub fn find_coef(&mut self) {
+impl Encoder for FraveImage {
+    fn find_coef(&mut self) {
         let lt: i32 = self.fn_cf(self.center, 2, self.depth - 2);
         let rt: i32 = self.fn_cf(
             self.center + self.variant[self.depth - 1],
@@ -105,9 +43,7 @@ impl Encoder {
         (rt + lt) / 2
     }
 
-    pub fn quantizate(&mut self) {
-        let quantization_matrix = get_quantization_matrix();
-        dbg!(self.coef.iter().minmax());
+    fn quantizate(&mut self, quantization_matrix: &[i32]) {
         self.coef = self
             .coef
             .iter()
@@ -119,19 +55,7 @@ impl Encoder {
             .collect::<Vec<i32>>();
     }
 
-    pub fn quantizate_with_matrix(&mut self, quantization_matrix: &[i32]) {
-        self.coef = self
-            .coef
-            .iter()
-            .enumerate()
-            .map(|(i, coefficient)| {
-                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
-                *coefficient / quantization_matrix[layer as usize]
-            })
-            .collect::<Vec<i32>>();
-    }
-
-    pub fn ans_encode(&self) -> (Vec<u8>, Vec<ans::AnsContext>) {
+    fn ans_encode(&self) -> (Vec<u8>, Vec<AnsContext>) {
         let layer1 = &self.coef[1 << (self.depth - 1)..];
         let layer2 = &self.coef[1 << (self.depth - 2)..1 << (self.depth - 1)];
         let layer3 = &self.coef[..1 << (self.depth - 2)];

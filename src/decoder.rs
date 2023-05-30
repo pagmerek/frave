@@ -10,8 +10,21 @@ use crate::utils::ans::AnsContext;
 use crate::utils::bitwise;
 
 pub trait Decoder {
+    /// Entropy decoding step of decoder procedure.
+    ///
+    /// Decodes compressed bit stream using provided context.
     fn ans_decode(&mut self, compressed_coef: Vec<u8>, ans_contexts: Vec<AnsContext>);
+
+    /// Unquantization step of decoder procedure.
+    ///
+    /// Performs multiplication on each Haar coefficient by a corresponding quantization parameter.
+    /// Coefficients are grouped by levels of depth in the Haar tree and each level has its own parameter
     fn unquantizate(&mut self, quantization_matrix: &[i32]);
+
+    /// Transform step of decoder procedure.
+    ///
+    /// Populates the image using `fn_vl` recursively, which calculates the proper luma values for
+    /// each pixel
     fn find_val(&mut self);
     fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize);
 }

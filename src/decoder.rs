@@ -1,37 +1,57 @@
-use std::cmp;
 use std::collections::HashMap;
 
-use image::GrayImage;
 use rans::b64_decoder::B64RansDecoderMulti;
 use rans::RansDecoderMulti;
 
 use crate::coord::Coord;
-use crate::frave_image::get_quantization_matrix;
 use crate::frave_image::FraveImage;
 use crate::utils::ans;
+use crate::utils::ans::AnsContext;
 use crate::utils::bitwise;
-use crate::variants::get_variant;
 
-pub struct Decoder {
-    width: u32,
-    height: u32,
-    variant: [Coord; 30],
-    depth: usize,
-    pub center: Coord,
-    coef: Vec<i32>,
-    pub image: GrayImage,
+pub trait Decoder {
+    fn ans_decode(&mut self, compressed_coef: Vec<u8>, ans_contexts: Vec<AnsContext>);
+    fn unquantizate(&mut self, quantization_matrix: &[i32]);
+    fn find_val(&mut self);
+    fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize);
 }
 
-impl Decoder {
-    pub fn new(frv: FraveImage) -> Self {
-        let width: u32 = frv.width;
-        let height: u32 = frv.height;
-        let depth: usize = frv.depth;
-        let mut coef = vec![];
+impl Decoder for FraveImage {
+    fn unquantizate(&mut self, quantization_matrix: &[i32]) {
+        self.coef = self
+            .coef
+            .iter()
+            .enumerate()
+            .map(|(i, coefficient)| {
+                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
+                *coefficient * quantization_matrix[layer as usize]
+            })
+            .collect::<Vec<i32>>();
+    }
 
+    fn find_val(&mut self) {
+        self.fn_vl(self.coef[0], 1, self.center, self.depth - 1);
+    }
+
+    fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize) {
+        let dif: i32 = self.coef[ps];
+        let lt: i32 = ((sum - dif) * 2) >> 1;
+        let rt: i32 = ((sum + dif) * 2) >> 1;
+        if dp > 0 {
+            self.fn_vl(lt, ps << 1, cn, dp - 1);
+            self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1)
+        } else {
+            self.set_pixel(cn.x, cn.y, lt);
+            self.set_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y, rt);
+        }
+    }
+
+    fn ans_decode(&mut self, compressed_coef: Vec<u8>, ans_contexts: Vec<AnsContext>) {
+        let mut coef = vec![];
+        let depth = self.depth;
         let scale_bits = (depth - 1) as u32;
-        let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(frv.compressed_coef);
-        let ctxs = frv.ans_contexts;
+        let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(compressed_coef);
+        let ctxs = ans_contexts;
         let layers = vec![
             0..(1 << (depth - 2)),
             (1 << (depth - 2))..(1 << (depth - 1)),
@@ -58,73 +78,6 @@ impl Decoder {
                 coef.push(symbol);
             }
         }
-        Decoder {
-            width,
-            height,
-            depth,
-            center: Coord {
-                x: frv.center.0,
-                y: frv.center.1,
-            },
-            coef,
-            image: GrayImage::new(width, height),
-            variant: get_variant(frv.variant),
-        }
-    }
-
-    #[inline]
-    pub fn set_pixel(&mut self, x: i32, y: i32, v: i32) {
-        let gray: u8 = cmp::max(0, cmp::min(v, 255)) as u8;
-        self.image.put_pixel(
-            x as u32 % self.width,
-            y as u32 % self.height,
-            image::Luma([gray]),
-        )
-    }
-
-    pub fn unquantizate(&mut self) {
-        let quantization_matrix = get_quantization_matrix();
-        self.coef = self
-            .coef
-            .iter()
-            .enumerate()
-            .map(|(i, coefficient)| {
-                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
-                *coefficient * quantization_matrix[layer as usize]
-            })
-            .collect::<Vec<i32>>();
-    }
-
-    pub fn unquantizate_with_matrix(&mut self, quantization_matrix: &[i32]) {
-        self.coef = self
-            .coef
-            .iter()
-            .enumerate()
-            .map(|(i, coefficient)| {
-                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
-                *coefficient * quantization_matrix[layer as usize]
-            })
-            .collect::<Vec<i32>>();
-    }
-
-    pub fn find_val(&mut self) {
-        self.fn_vl(self.coef[0], 1, self.center, self.depth - 1);
-    }
-
-    fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize) {
-        let dif: i32 = self.coef[ps];
-        let lt: i32 = ((sum - dif) * 2) >> 1;
-        let rt: i32 = ((sum + dif) * 2) >> 1;
-        if dp > 0 {
-            self.fn_vl(lt, ps << 1, cn, dp - 1);
-            self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1)
-        } else {
-            self.set_pixel(cn.x, cn.y, lt);
-            self.set_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y, rt);
-        }
-    }
-
-    fn ans_decode() {
-
+        self.coef = coef;
     }
 }

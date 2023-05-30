@@ -12,9 +12,26 @@ use crate::utils::bitwise;
 use itertools::Itertools;
 
 pub trait Encoder {
+    /// Transform step of encoding procedure.
+    /// Using `fn_cf` recursively calculate Haar wavelets of input image.
+    /// For each recursion level divides the biggest fractal into 2 smaller one
+    /// according to the complex numerical system describing the transform.
     fn find_coef(&mut self);
     fn fn_cf(&mut self, cn: Coord, ps: usize, dp: usize) -> i32;
+
+    /// Quantizations step of encoding procedure.
+    /// Performs rounding down division on each Haar coefficient by a corresponding quantization parameter.
+    /// Coefficients are grouped by levels of depth in the Haar tree and each level has its own parameter
     fn quantizate(&mut self, quantization_matrix: &[i32]);
+
+    /// Entropy coding step of encoding procedure. Divides Haar coefficients to 3 distinct
+    /// layers:
+    ///
+    /// - Haar tree leaves
+    /// - Haar tree pre-last layer
+    /// - Rest of the Haar tree
+    ///
+    /// Applies rANS algorithm for coefficient compression
     fn ans_encode(&self) -> (Vec<u8>, Vec<AnsContext>);
 }
 
@@ -66,7 +83,7 @@ impl Encoder for FraveImage {
         for (i, layer) in [layer1, layer2, layer3].iter().enumerate() {
             let counter = layer.iter().counts();
             let freq = counter.values().map(|e| *e as u32).collect::<Vec<u32>>();
-            let symbols = counter.keys().map(|e| **e as i32).collect::<Vec<i32>>();
+            let symbols = counter.keys().map(|e| **e).collect::<Vec<i32>>();
             let cdf = ans::cum_sum(&freq);
 
             let symbol_map = ans::freqs_to_enc_symbols(&cdf, &freq, self.depth);

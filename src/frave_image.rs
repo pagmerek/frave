@@ -124,7 +124,7 @@ impl Frv {
 }
 
 pub fn get_quantization_matrix_soft() -> Vec<i32> {
-    vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 2]
+    vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 6, 2]
 }
 
 pub fn get_quantization_matrix() -> Vec<i32> {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AnsContext {
-    pub symbols: Vec<i32>,
+    pub symbols: Vec<Option<i32>>,
     pub freq: Vec<u32>,
 }
 

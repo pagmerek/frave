@@ -11,7 +11,7 @@ pub struct FraveImage {
     pub depth: usize,
     pub center: Coord,
     pub variant: [Coord; 30],
-    pub coef: Vec<i32>,
+    pub coef: Vec<Option<i32>>,
     pub image: GrayImage,
 }
 
@@ -21,13 +21,15 @@ impl FraveImage {
         let height: u32 = image.height();
         let variant = get_variant(variant);
         let depth: usize = Self::calculate_depth(width, height, variant);
+        let center =  Coord{ x: width as i32 / 2, y: height as i32/2}; //;Self::find_center(depth, variant); 
+        dbg!(depth, center);
 
         FraveImage {
             width,
             height,
             depth,
-            center: Self::find_center(depth, variant),
-            coef: vec![0; 1 << depth],
+            center: center, //,
+            coef: vec![None; 1 << depth],
             image,
             variant,
         }
@@ -38,13 +40,14 @@ impl FraveImage {
         let height = frv.height;
         let variant = get_variant(frv.variant);
         let depth = Self::calculate_depth(width, height, variant);
-
+        let center = Coord{ x: width as i32 /2, y: height as i32/2}; //;Self::find_center(depth, variant); 
+           
         FraveImage {
             width,
             height,
             depth,
-            center: Self::find_center(depth, variant),
-            coef: vec![0; 1 << depth],
+            center,
+            coef: vec![None; 1 << depth],
             variant,
             image: GrayImage::new(width, height),
         }
@@ -53,17 +56,17 @@ impl FraveImage {
     fn calculate_depth(img_w: u32, img_h: u32, variant: [Coord; 30]) -> usize {
         variant
             .into_iter()
-            .scan((0, img_w as i32, img_h as i32), |accum, value| {
+            .scan((0, 0, 0), |accum, value| {
                 *accum = (
                     accum.0 + 1,
-                    accum.1 - value.x.abs(),
-                    accum.2 - value.y.abs(),
+                    value.x.abs(),
+                    value.y.abs(),
                 );
                 Some(*accum)
             })
-            .find(|&(_i, rw, rh)| rw <= 0 && rh <= 0)
+            .find(|&(_i, rw, rh)| img_w as i32 <= rw && img_h as i32 <= rh)
             .unwrap()
-            .0
+            .0 - 1
     }
 
     fn find_center(depth: usize, variant: [Coord; 30]) -> Coord {
@@ -76,22 +79,25 @@ impl FraveImage {
     }
 
     #[inline]
-    pub fn get_pixel(&self, x: i32, y: i32) -> i32 {
-        let [gray] = self
-            .image
-            .get_pixel(x as u32 % self.width, y as u32 % self.height)
+    pub fn get_pixel(&self, x: u32, y: u32) -> Option<i32> {
+        if x < self.width && y < self.height {
+            let [gray] = self
+                .image
+                .get_pixel(x % self.width, y % self.height)
             .0; // we assume grayscale for now
-        gray as i32
+            Some(gray as i32)
+        }
+        else {
+            None
+        }
     }
 
     #[inline]
-    pub fn set_pixel(&mut self, x: i32, y: i32, v: i32) {
+    pub fn set_pixel(&mut self, x: u32, y: u32, v: i32) {
         let gray: u8 = cmp::max(0, cmp::min(v, 255)) as u8;
-        self.image.put_pixel(
-            x as u32 % self.width,
-            y as u32 % self.height,
-            image::Luma([gray]),
-        )
+        if x < self.width && y < self.height {
+            self.image.put_pixel(x,y,image::Luma([gray]))
+        }
     }
 }
 
@@ -128,5 +134,5 @@ pub fn get_quantization_matrix_soft() -> Vec<i32> {
 }
 
 pub fn get_quantization_matrix() -> Vec<i32> {
-    vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 5, 9, 2]
+    vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 5, 9, 2]
 }

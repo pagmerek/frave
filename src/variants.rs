@@ -10,6 +10,7 @@ pub enum Variant {
     SkewedTameTwindragon,
 }
 
+// TODO: Write generator for these numbers
 pub fn get_variant(var: Variant) -> [Coord; 30] {
     match var {
         Variant::Boxes => [

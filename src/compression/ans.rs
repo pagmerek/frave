@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AnsContext {
-    pub symbols: Vec<Option<i32>>,
+    pub symbols: Vec<i32>,
     pub freq: Vec<u32>,
 }
 
+#[must_use]
 pub fn cum_sum(sum: &[u32]) -> Vec<u32> {
     sum.iter()
         .scan(0_u32, |acc, x| {
@@ -21,6 +22,8 @@ pub fn cum_sum(sum: &[u32]) -> Vec<u32> {
         .collect::<Vec<u32>>()
 }
 
+// TODO: Implement Alias sampling method
+#[must_use]
 pub fn find_nearest_or_equal(cum_freq: u32, cum_freqs: &[u32]) -> u32 {
     match cum_freqs.binary_search(&cum_freq) {
         Ok(x) => cum_freqs[x],
@@ -28,6 +31,7 @@ pub fn find_nearest_or_equal(cum_freq: u32, cum_freqs: &[u32]) -> u32 {
     }
 }
 
+#[must_use]
 pub fn freqs_to_enc_symbols(
     cum_freq: &[u32],
     freq: &[u32],
@@ -39,12 +43,13 @@ pub fn freqs_to_enc_symbols(
         .map(|(&cum_freq, &freq)| {
             (
                 cum_freq,
-                B64RansEncSymbol::new(cum_freq, freq, (depth - 1) as u32),
+                B64RansEncSymbol::new(cum_freq, freq, u32::try_from(depth - 1).unwrap()),
             )
         })
         .collect::<HashMap<u32, B64RansEncSymbol>>()
 }
 
+#[must_use]
 pub fn freqs_to_dec_symbols(cum_freq: &[u32], freq: &[u32]) -> HashMap<u32, B64RansDecSymbol> {
     cum_freq
         .iter()

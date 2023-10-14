@@ -1,4 +1,4 @@
-pub fn get_prev_power_two(x: u32) -> u32 {
+pub const fn get_prev_power_two(x: usize) -> usize {
     let mut num = x;
     num |= num >> 1;
     num |= num >> 2;

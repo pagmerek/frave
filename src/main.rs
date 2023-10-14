@@ -2,7 +2,7 @@ use frave::commands::{decode, encode};
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use frave::variants::Variant;
+use frave::fractal::variants::Variant;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

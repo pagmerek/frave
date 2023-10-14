@@ -1,7 +1,4 @@
 pub mod commands;
-pub mod coord;
-pub mod decoder;
-pub mod encoder;
-pub mod frave_image;
+pub mod compression;
+pub mod fractal;
 mod utils;
-pub mod variants;

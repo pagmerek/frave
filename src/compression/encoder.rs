@@ -1,21 +1,20 @@
 use std::collections::HashMap;
 use std::vec;
 
+use itertools::Itertools;
 use rans::b64_encoder::B64RansEncoderMulti;
 use rans::RansEncoderMulti;
 
-use crate::coord::Coord;
-use crate::frave_image::FraveImage;
-use crate::utils::ans;
-use crate::utils::ans::AnsContext;
+use crate::compression::ans::{self, AnsContext};
+use crate::fractal::image::FractalImage;
 use crate::utils::bitwise;
-use itertools::Itertools;
+use crate::utils::coordinate::Coord;
 
 fn try_apply<T: Copy>(first: Option<T>, second: Option<T>, operation: fn(T, T) -> T) -> Option<T> {
     match (first, second) {
         (Some(f), Some(s)) => Some(operation(f, s)),
-        (Some(f), None) => Some(operation(f,f)),
-        (None, Some(s)) => Some(operation(s,s)),
+        (Some(f), None) => Some(operation(f, f)),
+        (None, Some(s)) => Some(operation(s, s)),
         (None, None) => None,
     }
 }
@@ -42,11 +41,11 @@ pub trait Encoder {
     /// - Haar tree pre-last layer
     /// - Rest of the Haar tree
     ///
-    /// Applies rANS algorithm for coefficient compression
+    /// Applies `rANS` algorithm for coefficient compression
     fn ans_encode(&self) -> (Vec<u8>, Vec<AnsContext>);
 }
 
-impl Encoder for FraveImage {
+impl Encoder for FractalImage {
     fn find_coef(&mut self) {
         let lt = self.fn_cf(self.center, 2, self.depth - 2);
         let rt = self.fn_cf(
@@ -65,11 +64,8 @@ impl Encoder for FraveImage {
             lt = self.fn_cf(cn, ps << 1, dp - 1);
             rt = self.fn_cf(cn + self.variant[dp], (ps << 1) + 1, dp - 1);
         } else {
-            lt = self.get_pixel(cn.x as u32, cn.y as u32);
-            rt = self.get_pixel(
-                (cn.x + self.variant[0].x) as u32,
-                (cn.y + self.variant[0].y) as u32,
-            );
+            lt = self.get_pixel(cn.x, cn.y);
+            rt = self.get_pixel(cn.x + self.variant[0].x, cn.y + self.variant[0].y);
         }
 
         self.coef[ps] = try_apply(rt, lt, |r, l| (r - l) / 2);
@@ -82,13 +78,14 @@ impl Encoder for FraveImage {
             .iter()
             .enumerate()
             .map(|(i, coefficient)| {
-                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
-                (*coefficient).and_then(|s| Some(s / quantization_matrix[layer as usize]))
+                let layer = bitwise::get_prev_power_two(i + 1).trailing_zeros();
+                (*coefficient).map(|s| s / quantization_matrix[layer as usize])
             })
             .collect::<Vec<Option<i32>>>();
     }
 
     fn ans_encode(&self) -> (Vec<u8>, Vec<AnsContext>) {
+        dbg!(&self.coef);
         let layer1 = &self.coef[1 << (self.depth - 1)..];
         let layer2 = &self.coef[1 << (self.depth - 2)..1 << (self.depth - 1)];
         let layer3 = &self.coef[..1 << (self.depth - 2)];
@@ -96,10 +93,14 @@ impl Encoder for FraveImage {
         let mut encoder: B64RansEncoderMulti<3> = B64RansEncoderMulti::new(1 << self.depth);
         let mut contexts: Vec<ans::AnsContext> = vec![];
 
-        for (i, layer) in [layer1, layer2, layer3].iter().enumerate() {
-            let counter = layer.iter().counts();
-            let freq = counter.values().map(|e| *e as u32).collect::<Vec<u32>>();
-            let symbols = counter.keys().map(|e| **e).collect::<Vec<Option<i32>>>();
+        for (i, layer) in [layer1, layer2, layer3].into_iter().enumerate() {
+            let some_layer = layer.iter().flatten();
+            let counter = some_layer.clone().counts();
+            let freq = counter
+                .values()
+                .map(|e| u32::try_from(*e).unwrap())
+                .collect::<Vec<u32>>();
+            let symbols = counter.keys().map(|e| **e).collect::<Vec<i32>>();
             let cdf = ans::cum_sum(&freq);
 
             let symbol_map = ans::freqs_to_enc_symbols(&cdf, &freq, self.depth);
@@ -107,12 +108,10 @@ impl Encoder for FraveImage {
             let cdf_map = counter
                 .clone()
                 .into_keys()
-                .map(|e| e.to_owned())
                 .zip(cdf.clone())
-                .collect::<HashMap<Option<i32>, u32>>();
+                .collect::<HashMap<&i32, u32>>();
 
-            layer
-                .iter()
+            some_layer
                 .rev()
                 .for_each(|s| encoder.put_at(i, &symbol_map[&cdf_map[s]]));
 

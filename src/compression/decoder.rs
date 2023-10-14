@@ -1,15 +1,12 @@
 use std::collections::HashMap;
 
-use image::GrayImage;
 use rans::b64_decoder::B64RansDecoderMulti;
 use rans::RansDecoderMulti;
 
-use crate::coord::Coord;
-use crate::frave_image::get_quantization_matrix;
-use crate::frave_image::FraveImage;
-use crate::utils::ans;
-use crate::utils::ans::AnsContext;
+use crate::compression::ans::{self, AnsContext};
+use crate::fractal::image::FractalImage;
 use crate::utils::bitwise;
+use crate::utils::coordinate::Coord;
 
 pub trait Decoder {
     /// Entropy decoding step of decoder procedure.
@@ -31,15 +28,15 @@ pub trait Decoder {
     fn fn_vl(&mut self, sum: i32, ps: usize, cn: Coord, dp: usize);
 }
 
-impl Decoder for FraveImage {
+impl Decoder for FractalImage {
     fn unquantizate(&mut self, quantization_matrix: &[i32]) {
         self.coef = self
             .coef
             .iter()
             .enumerate()
             .map(|(i, coefficient)| {
-                let layer = bitwise::get_prev_power_two(i as u32 + 1).trailing_zeros();
-                (*coefficient).and_then(|s| Some(s * quantization_matrix[layer as usize]))
+                let layer = bitwise::get_prev_power_two(i + 1).trailing_zeros();
+                (*coefficient).map(|s| s * quantization_matrix[layer as usize])
             })
             .collect::<Vec<Option<i32>>>();
     }
@@ -47,9 +44,8 @@ impl Decoder for FraveImage {
     fn find_val(&mut self) {
         if let Some(root) = self.coef[0] {
             self.fn_vl(root, 1, self.center, self.depth - 1);
-        }
-        else {
-            println!("whoops")
+        } else {
+            println!("whoops");
         }
     }
 
@@ -59,11 +55,11 @@ impl Decoder for FraveImage {
             let rt: i32 = ((sum + dif) * 2) >> 1;
             if dp > 0 {
                 self.fn_vl(lt, ps << 1, cn, dp - 1);
-                self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1)
+                self.fn_vl(rt, (ps << 1) + 1, cn + self.variant[dp], dp - 1);
             } else {
-                let secondary_x = (cn.x + self.variant[0].x) as u32;
-                let secondary_y = (cn.y + self.variant[0].y) as u32;
-                self.set_pixel(cn.x as u32, cn.y as u32, lt);
+                let secondary_x = cn.x + self.variant[0].x;
+                let secondary_y = cn.y + self.variant[0].y;
+                self.set_pixel(cn.x, cn.y, lt);
                 self.set_pixel(secondary_x, secondary_y, rt);
             }
         }
@@ -72,7 +68,7 @@ impl Decoder for FraveImage {
     fn ans_decode(&mut self, compressed_coef: Vec<u8>, ans_contexts: Vec<AnsContext>) {
         let mut coef = vec![];
         let depth = self.depth;
-        let scale_bits = (depth - 1) as u32;
+        let scale_bits = u32::try_from(depth - 1).unwrap();
         let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(compressed_coef);
         let ctxs = ans_contexts;
         let layers = vec![
@@ -81,24 +77,23 @@ impl Decoder for FraveImage {
             (1 << (depth - 1))..(1 << depth),
         ];
         for (i, layer) in layers.iter().enumerate() {
-            let cum_freqs = ans::cum_sum(&ctxs[2 - i].freq);
+            let mut cum_freqs = ans::cum_sum(&ctxs[2 - i].freq);
             let cum_freq_to_symbols = ans::freqs_to_dec_symbols(&cum_freqs, &ctxs[2 - i].freq);
             let symbol_map = cum_freqs
-                .iter()
-                .map(|e| e.to_owned())
+                .clone()
+                .into_iter()
                 .zip(ctxs[2 - i].symbols.clone())
-                .collect::<HashMap<u32, Option<i32>>>();
+                .collect::<HashMap<u32, i32>>();
 
-            let mut cum_freqs_sorted = cum_freqs.to_owned();
-            cum_freqs_sorted.sort();
+            cum_freqs.sort_unstable();
 
             for _l in layer.clone() {
                 let cum_freq_decoded =
-                    ans::find_nearest_or_equal(decoder.get_at(i, scale_bits), &cum_freqs_sorted);
+                    ans::find_nearest_or_equal(decoder.get_at(i, scale_bits), &cum_freqs);
                 let symbol = symbol_map[&cum_freq_decoded];
                 decoder.advance_step_at(i, &cum_freq_to_symbols[&cum_freq_decoded], scale_bits);
                 decoder.renorm_at(i);
-                coef.push(symbol);
+                coef.push(Some(symbol));
             }
         }
         self.coef = coef;

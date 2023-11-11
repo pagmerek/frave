@@ -1,5 +1,3 @@
-use std::cmp;
-
 use image::GrayImage;
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +53,6 @@ impl FractalImage {
             x: width as i32 / 2,
             y: height as i32 / 2,
         }; //;Self::find_center(depth, variant);
-        dbg!(depth, center);
 
         Self {
             height,
@@ -99,17 +96,18 @@ impl FractalImage {
             .find(|&(_i, rw, rh)| img_w as i32 <= rw && img_h as i32 <= rh)
             .unwrap()
             .0
-            -1 
+            - 1
     }
 
-    fn find_center(depth: usize, variant: [Coord; 30]) -> Coord {
-        variant[0..depth]
-            .iter()
-            .fold(Coord { x: 0, y: 0 }, |accum, value| Coord {
-                x: accum.x - cmp::min(0, value.x),
-                y: accum.y - cmp::min(0, value.y),
-            })
-    }
+    // TODO: Implement valid find center algorithm
+    // fn find_center(depth: usize, variant: [Coord; 30]) -> Coord {
+    //     variant[0..depth]
+    //         .iter()
+    //         .fold(Coord { x: 0, y: 0 }, |accum, value| Coord {
+    //             x: accum.x - cmp::min(0, value.x),
+    //             y: accum.y - cmp::min(0, value.y),
+    //         })
+    // }
 
     #[inline]
     pub fn get_pixel(&self, x: i32, y: i32) -> Option<i32> {
@@ -140,6 +138,6 @@ pub fn get_quantization_matrix_soft() -> Vec<i32> {
 #[must_use]
 pub fn get_quantization_matrix() -> Vec<i32> {
     vec![
-        1, 1, 1,1,1,1,1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 10, 10, 10, 10, 10, 10, 16, 9, 2,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 10, 10, 10, 10, 10, 10, 16, 9, 2,
     ]
 }

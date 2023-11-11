@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
 use rans::b64_decoder::B64RansDecoderMulti;
 use rans::RansDecoderMulti;
 
 use crate::compression::ans::{self, AnsContext};
 use crate::fractal::image::FractalImage;
-use crate::utils::bitwise;
-use crate::utils::coordinate::Coord;
+use crate::utils::{self, Coord};
+
+use super::encoder::Encoder;
 
 pub trait Decoder {
     /// Entropy decoding step of decoder procedure.
@@ -35,7 +37,7 @@ impl Decoder for FractalImage {
             .iter()
             .enumerate()
             .map(|(i, coefficient)| {
-                let layer = bitwise::get_prev_power_two(i + 1).trailing_zeros();
+                let layer = utils::get_prev_power_two(i + 1).trailing_zeros();
                 (*coefficient).map(|s| s * quantization_matrix[layer as usize])
             })
             .collect::<Vec<Option<i32>>>();
@@ -66,16 +68,19 @@ impl Decoder for FractalImage {
     }
 
     fn ans_decode(&mut self, compressed_coef: Vec<u8>, ans_contexts: Vec<AnsContext>) {
-        let mut coef = vec![];
-        let depth = self.depth;
+        self.find_coef();
+        let length = self.coef.iter().filter(|x| x.is_some()).count();
+        let mut coef = self.coef.clone();
+        let depth = utils::get_prev_power_two(length).trailing_zeros() + 1;
         let scale_bits = u32::try_from(depth - 1).unwrap();
         let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(compressed_coef);
         let ctxs = ans_contexts;
         let layers = vec![
-            0..(1 << (depth - 2)),
-            (1 << (depth - 2))..(1 << (depth - 1)),
-            (1 << (depth - 1))..(1 << depth),
+            0..1 << (depth - 2),
+            1 << (depth - 2)..1 << (depth - 1),
+            1 << (depth - 1)..length,
         ];
+        let mut last = 0;
         for (i, layer) in layers.iter().enumerate() {
             let mut cum_freqs = ans::cum_sum(&ctxs[2 - i].freq);
             let cum_freq_to_symbols = ans::freqs_to_dec_symbols(&cum_freqs, &ctxs[2 - i].freq);
@@ -93,9 +98,15 @@ impl Decoder for FractalImage {
                 let symbol = symbol_map[&cum_freq_decoded];
                 decoder.advance_step_at(i, &cum_freq_to_symbols[&cum_freq_decoded], scale_bits);
                 decoder.renorm_at(i);
-                coef.push(Some(symbol));
+                last = insert_after_none_starting_from(symbol, last, &mut coef);
             }
         }
         self.coef = coef;
     }
+}
+
+fn insert_after_none_starting_from(element: i32, i: usize, vec: &mut Vec<Option<i32>>) -> usize {
+    let ind = (i..vec.len()).find(|j| vec[*j].is_some()).unwrap();
+    vec[ind] = Some(element);
+    ind + 1
 }

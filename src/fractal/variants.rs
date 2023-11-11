@@ -1,4 +1,4 @@
-use crate::utils::coordinate::Coord;
+use crate::utils::Coord;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 

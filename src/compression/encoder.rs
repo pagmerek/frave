@@ -7,8 +7,7 @@ use rans::RansEncoderMulti;
 
 use crate::compression::ans::{self, AnsContext};
 use crate::fractal::image::FractalImage;
-use crate::utils::bitwise;
-use crate::utils::coordinate::Coord;
+use crate::utils::{self, Coord};
 
 fn try_apply<T: Copy>(first: Option<T>, second: Option<T>, operation: fn(T, T) -> T) -> Option<T> {
     match (first, second) {
@@ -55,7 +54,7 @@ impl Encoder for FractalImage {
         );
         self.coef[1] = try_apply(rt, lt, |r, l| (r - l) / 2);
         self.coef[0] = try_apply(rt, lt, |r, l| (r + l) / 2);
-        dbg!(self.coef.iter().filter(|x| x.is_some()).count());
+        // dbg!(self.coef.iter().filter(|x| x.is_some()).count());
     }
 
     fn fn_cf(&mut self, cn: Coord, ps: usize, dp: usize) -> Option<i32> {
@@ -78,24 +77,24 @@ impl Encoder for FractalImage {
             .iter()
             .enumerate()
             .map(|(i, coefficient)| {
-                let layer = bitwise::get_prev_power_two(i + 1).trailing_zeros();
+                let layer = utils::get_prev_power_two(i + 1).trailing_zeros();
                 (*coefficient).map(|s| s / quantization_matrix[layer as usize])
             })
             .collect::<Vec<Option<i32>>>();
     }
 
     fn ans_encode(&self) -> (Vec<u8>, Vec<AnsContext>) {
-        dbg!(&self.coef);
-        let layer1 = &self.coef[1 << (self.depth - 1)..];
-        let layer2 = &self.coef[1 << (self.depth - 2)..1 << (self.depth - 1)];
-        let layer3 = &self.coef[..1 << (self.depth - 2)];
+        let valid_coef = &self.coef.clone().into_iter().flatten().collect::<Vec<i32>>();
+        let true_depth = utils::get_prev_power_two(valid_coef.len()).trailing_zeros() + 1;
+        let layer1 = &valid_coef[1 << (true_depth - 1)..];
+        let layer2 = &valid_coef[1 << (true_depth - 2)..1 << (true_depth - 1)];
+        let layer3 = &valid_coef[..1 << (true_depth - 2)];
 
-        let mut encoder: B64RansEncoderMulti<3> = B64RansEncoderMulti::new(1 << self.depth);
+        let mut encoder: B64RansEncoderMulti<3> = B64RansEncoderMulti::new(valid_coef.len());
         let mut contexts: Vec<ans::AnsContext> = vec![];
 
         for (i, layer) in [layer1, layer2, layer3].into_iter().enumerate() {
-            let some_layer = layer.iter().flatten();
-            let counter = some_layer.clone().counts();
+            let counter = layer.clone().into_iter().counts();
             let freq = counter
                 .values()
                 .map(|e| u32::try_from(*e).unwrap())
@@ -103,7 +102,7 @@ impl Encoder for FractalImage {
             let symbols = counter.keys().map(|e| **e).collect::<Vec<i32>>();
             let cdf = ans::cum_sum(&freq);
 
-            let symbol_map = ans::freqs_to_enc_symbols(&cdf, &freq, self.depth);
+            let symbol_map = ans::freqs_to_enc_symbols(&cdf, &freq, true_depth as usize);
 
             let cdf_map = counter
                 .clone()
@@ -111,7 +110,8 @@ impl Encoder for FractalImage {
                 .zip(cdf.clone())
                 .collect::<HashMap<&i32, u32>>();
 
-            some_layer
+            layer
+                .iter()
                 .rev()
                 .for_each(|s| encoder.put_at(i, &symbol_map[&cdf_map[s]]));
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compression::ans::AnsContext;
 use crate::fractal::variants::Variant;
-use crate::utils::coordinate::Coord;
+use crate::utils::Coord;
 
 #[derive(Serialize, Deserialize)]
 pub struct Frv {
@@ -99,7 +99,7 @@ impl FractalImage {
             .find(|&(_i, rw, rh)| img_w as i32 <= rw && img_h as i32 <= rh)
             .unwrap()
             .0
-            - 1
+            -1 
     }
 
     fn find_center(depth: usize, variant: [Coord; 30]) -> Coord {
@@ -124,7 +124,7 @@ impl FractalImage {
 
     #[inline]
     pub fn set_pixel(&mut self, x: i32, y: i32, v: i32) {
-        let (x, y) = (u32::try_from(x).unwrap(), u32::try_from(y).unwrap());
+        let (x, y) = (x as u32, y as u32);
         let gray = v.clamp(0, 255) as u8;
         if x < self.width && y < self.height {
             self.image.put_pixel(x, y, image::Luma([gray]));
@@ -140,6 +140,6 @@ pub fn get_quantization_matrix_soft() -> Vec<i32> {
 #[must_use]
 pub fn get_quantization_matrix() -> Vec<i32> {
     vec![
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 5, 9, 2,
+        1, 1, 1,1,1,1,1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 10, 10, 10, 10, 10, 10, 16, 9, 2,
     ]
 }

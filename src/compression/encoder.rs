@@ -84,7 +84,12 @@ impl Encoder for FractalImage {
     }
 
     fn ans_encode(&self) -> (Vec<u8>, Vec<AnsContext>) {
-        let valid_coef = &self.coef.clone().into_iter().flatten().collect::<Vec<i32>>();
+        let valid_coef = &self
+            .coef
+            .clone()
+            .into_iter()
+            .flatten()
+            .collect::<Vec<i32>>();
         let true_depth = utils::get_prev_power_two(valid_coef.len()).trailing_zeros() + 1;
         let layer1 = &valid_coef[1 << (true_depth - 1)..];
         let layer2 = &valid_coef[1 << (true_depth - 2)..1 << (true_depth - 1)];
@@ -94,7 +99,7 @@ impl Encoder for FractalImage {
         let mut contexts: Vec<ans::AnsContext> = vec![];
 
         for (i, layer) in [layer1, layer2, layer3].into_iter().enumerate() {
-            let counter = layer.clone().into_iter().counts();
+            let counter = &(*layer).iter().counts();
             let freq = counter
                 .values()
                 .map(|e| u32::try_from(*e).unwrap())

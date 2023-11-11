@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use itertools::Itertools;
 use rans::b64_decoder::B64RansDecoderMulti;
 use rans::RansDecoderMulti;
 
@@ -72,7 +71,7 @@ impl Decoder for FractalImage {
         let length = self.coef.iter().filter(|x| x.is_some()).count();
         let mut coef = self.coef.clone();
         let depth = utils::get_prev_power_two(length).trailing_zeros() + 1;
-        let scale_bits = u32::try_from(depth - 1).unwrap();
+        let scale_bits = depth - 1;
         let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(compressed_coef);
         let ctxs = ans_contexts;
         let layers = vec![

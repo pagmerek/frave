@@ -54,7 +54,6 @@ impl Encoder for FractalImage {
         );
         self.coef[1] = try_apply(rt, lt, |r, l| (r - l) / 2);
         self.coef[0] = try_apply(rt, lt, |r, l| (r + l) / 2);
-        // dbg!(self.coef.iter().filter(|x| x.is_some()).count());
     }
 
     fn fn_cf(&mut self, cn: Coord, ps: usize, dp: usize) -> Option<i32> {

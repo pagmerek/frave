@@ -113,7 +113,7 @@ impl FractalImage {
     pub fn get_pixel(&self, x: i32, y: i32) -> Option<i32> {
         let (x, y) = (x as u32, y as u32);
         if x < self.width && y < self.height {
-            let [gray] = self.image.get_pixel(x % self.width, y % self.height).0; // we assume grayscale for now
+            let [gray] = self.image.get_pixel(x, y).0; // we assume grayscale for now
             Some(i32::from(gray))
         } else {
             None

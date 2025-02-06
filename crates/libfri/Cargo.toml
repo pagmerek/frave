@@ -1,0 +1,10 @@
+[package]
+name = "libfri"
+version = "0.1.0"
+edition = "2021"
+authors = [ "Pawel pgmerek@proton.me"]
+
+[dependencies]
+rans = "0.2.1"
+num = "0.4.3"
+itertools = "0.14.0"

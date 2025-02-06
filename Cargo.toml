@@ -1,15 +1,4 @@
-[package]
-name = "frave"
-version = "0.1.0"
-about = "Image compression program based on complex based numeral systems"
-edition = "2021"
+[workspace]
+members = ["crates/*"]
+resolver = "2"
 
-[dependencies]
-itertools = "0.10.5"
-clap = { version = "4.0.32", features = ["derive"] }
-bincode = "1.0"
-image = "0.24.5"
-serde = { version = "1.0", features = ["derive"] }
-serde_bytes = "0.11"
-bmp = "0.5.0"
-rans = "0.2.1"

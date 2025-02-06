@@ -1,0 +1,12 @@
+[package]
+name = "fri-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libfri = { path = "../libfri" }
+
+clap = { version = "4.0.32", features = ["derive"] }
+image = "0.24.5"
+
+

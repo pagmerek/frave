@@ -1,6 +1,7 @@
 [package]
-name = "frif-cli"
+name = "fri-bench"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+libfri = { path = "../libfri" }

@@ -1,6 +1,4 @@
-
-use crate::images::FractalVariant;
-use crate::images::{ColorSpace, CompressedImage, RasterImage, ImageMetadata};
+use crate::images::{FractalVariant, ColorSpace, CompressedImage, RasterImage, ImageMetadata};
 use crate::stages::wavelet_transform::WaveletImage;
 use crate::stages::{channel_transform, entropy_coding, quantization, serialize, wavelet_transform};
 

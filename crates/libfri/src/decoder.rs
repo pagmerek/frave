@@ -1,5 +1,5 @@
 
-use crate::images::{ColorSpace, CompressedImage, RasterImage};
+use crate::images::{CompressedImage, RasterImage};
 use crate::stages::wavelet_transform::WaveletImage;
 use crate::stages::{channel_transform, entropy_coding, quantization, wavelet_transform, serialize};
 

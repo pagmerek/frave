@@ -1,4 +1,4 @@
-use crate::fractal::LITERALS;
+use crate::fractal::{LITERALS, CENTERS};
 use crate::images::{ImageMetadata, RasterImage};
 
 use num::Complex;
@@ -19,17 +19,26 @@ pub struct WaveletImage {
     pub coefficients: [Vec<Option<i32>>; 3],
 }
 
-fn calculate_depth(img_w: u32, img_h: u32) -> u8 {
-    LITERALS
-        .iter()
-        .scan((0, 0, 0), |accum, value| {
-            *accum = (accum.0 + 1, value.re.abs(), value.im.abs());
-            Some(*accum)
-        })
-        .find(|&(_i, rw, rh)| img_w as i32 <= rw && img_h as i32 <= rh)
-        .unwrap()
-        .0
-        - 1
+//fn calculate_depth(img_w: u32, img_h: u32) -> u8 {
+//    LITERALS
+//        .iter()
+//        .scan((0, 0, 0), |accum, value| {
+//            *accum = (accum.0 + 1, value.re.abs(), value.im.abs());
+//            Some(*accum)
+//        })
+//        .find(|&(_i, rw, rh)| img_w as i32 <= rw && img_h as i32 <= rh)
+//        .unwrap()
+//        .0
+//        - 1
+//}
+
+fn calculate_depth_center(img_w: u32, img_h: u32) -> (u8, Complex<i32>) {
+    let ((_, _), center, depth) = CENTERS
+        .into_iter()
+        .find(|&((w, h), _, _)| w >= (img_w as i32) && h >= (img_h as i32))
+        .unwrap();
+
+    return (depth, center);
 }
 
 fn extract_coefficients(
@@ -83,7 +92,7 @@ impl RasterImage {
         return raster;
     }
 
-    fn extract_values(
+fn extract_values(
         &mut self,
         wavelet_coefs: &Vec<Option<i32>>,
         channel: usize,
@@ -125,8 +134,7 @@ impl WaveletImage {
     }
 
     pub fn from_raster(raster_image: RasterImage) -> WaveletImage {
-        let depth: u8 = calculate_depth(raster_image.metadata.width, raster_image.metadata.height);
-        let center = Complex::<i32>::new(raster_image.metadata.width as i32 /2, raster_image.metadata.height as i32 /2);
+        let (depth, center) = calculate_depth_center(raster_image.metadata.width, raster_image.metadata.height);
         let mut coefficients = [vec![None; 1<<depth], vec![None; 1<<depth], vec![None; 1<<depth]];
         for i in 0..raster_image.metadata.colorspace.num_channels() {
             let left_coef =

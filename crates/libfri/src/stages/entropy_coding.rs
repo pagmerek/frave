@@ -15,17 +15,30 @@ pub fn encode(image: WaveletImage) -> Result<CompressedImage, String> {
     let mut channel_data: [Option<(Vec<AnsContext>, Vec<u8>)>; 3] = [None, None, None];
 
     for i in 0..image.metadata.colorspace.num_channels() {
+        let depth = image.depth;
+
+        let mut layers: Vec<&[Option<i32>]> = vec![];
+        let channel_coefficients = &image.coefficients[i];
+
+        layers.push(&channel_coefficients[1 << (depth - 1)..]);
+        layers.push(&channel_coefficients[1 << (depth - 2)..1 << (depth - 1)]);
+        layers.push(&channel_coefficients[..1 << (depth - 2)]);
+
+        //let layer2 = &valid_coef[1 << (depth - 2)..1 << (depth - 1)];
+        //let layer3 = &valid_coef[..1 << (depth - 2)];
+
+        //let valid_coef: Vec<&i32> = image.coefficients[i].iter().flatten().collect();
+        //let depth = utils::get_prev_power_two(valid_coef.len()).trailing_zeros() + 1;
         let valid_coef: Vec<&i32> = image.coefficients[i].iter().flatten().collect();
         let true_depth = utils::get_prev_power_two(valid_coef.len()).trailing_zeros() + 1;
-        let layer1 = &valid_coef[1 << (true_depth - 1)..];
-        let layer2 = &valid_coef[1 << (true_depth - 2)..1 << (true_depth - 1)];
-        let layer3 = &valid_coef[..1 << (true_depth - 2)];
-
-        let mut encoder: B64RansEncoderMulti<3> = B64RansEncoderMulti::new(valid_coef.len());
+        
+        let mut encoder: B64RansEncoderMulti<3> = B64RansEncoderMulti::new(image.coefficients[i].iter().flatten().count());
 
         let mut ans_contexts = vec![];
-        for (i, layer) in [layer1, layer2, layer3].into_iter().enumerate() {
-            let counter = layer.into_iter().counts();
+        //let filtered_layers Vec<&[i32]> = layers.into_iter().map(|x| x.into_iter().flatten().collect()).collect();
+        for (i, sparse_layer) in layers.into_iter().enumerate() {
+            let layer: Vec<&i32> = sparse_layer.into_iter().flatten().collect();
+            let counter = layer.iter().counts();
             let freq = counter
                 .values()
                 .map(|e| u32::try_from(*e).unwrap())
@@ -61,14 +74,26 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
 
     let mut channel = 0;
     while let Some((ans_contexts, bytes)) = compressed_image.channel_data[channel].take() {
-        let length = decoded.coefficients[channel].iter().filter(|x| x.is_some()).count();
-        let depth = utils::get_prev_power_two(length).trailing_zeros() + 1;
-        let scale_bits = depth - 1;
+        let valid_coef: Vec<(u32, i32)> = decoded.coefficients[channel]
+            .iter()
+            .enumerate()
+            .map(|(i, val)| (utils::get_prev_power_two(i+1).trailing_zeros(), val))
+            .filter(|(_i, val)| val.is_some())
+            .map(|(i, val)| (i, val.unwrap()))
+            .collect();
+
+        let depth = decoded.depth;
+        let layer3: Vec<&i32> = valid_coef.iter().filter(|(i, _)| *i == (depth.wrapping_sub(1) as u32)).map(|(_, val)| val).collect(); 
+        let layer2: Vec<&i32> = valid_coef.iter().filter(|(i, _)| *i == (depth.wrapping_sub(2) as u32)).map(|(_, val)| val).collect(); 
+        let layer1: Vec<&i32> = valid_coef.iter().filter(|(i, _)| *i < (depth.wrapping_sub(2) as u32)).map(|(_, val)| val).collect(); 
+        let true_depth = utils::get_prev_power_two(valid_coef.len()).trailing_zeros() + 1;
+        let scale_bits = (true_depth - 1) as u32;
         let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(bytes);
+
         let layers = vec![
-            0..1 << (depth - 2),
-            1 << (depth - 2)..1 << (depth - 1),
-            1 << (depth - 1)..length,
+            layer1.len(),
+            layer2.len(),
+            layer3.len(),
         ];
         let mut last = 0;
         for (i, layer) in layers.into_iter().enumerate() {
@@ -82,7 +107,7 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
 
             cum_freqs.sort_unstable();
 
-            for _l in layer {
+            for _l in 0..layer {
                 let cum_freq_decoded =
                     find_nearest_or_equal(decoder.get_at(i, scale_bits), &cum_freqs);
                 let symbol = symbol_map[&cum_freq_decoded];

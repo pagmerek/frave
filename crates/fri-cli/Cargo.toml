@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 libfri = { path = "../libfri" }
 
+itertools = "0.10.5"
+plotters = { version = "0.3.7", features = ["ab_glyph", "fontconfig-dlopen"] }
 clap = { version = "4.0.32", features = ["derive"] }
 image = "0.24.5"
 

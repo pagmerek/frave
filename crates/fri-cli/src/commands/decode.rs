@@ -9,14 +9,14 @@ use libfri::decoder::FRIDecoder;
 
 #[derive(clap::Args)]
 /// Decodes frave file to bitmap format
-pub struct Decode {
+pub struct DecodeCommand {
     pub fr_path: PathBuf,
 
     #[arg(short, default_value_t = String::from("a.bmp"))]
     pub output: String,
 }
 
-pub fn decode_image(cmd: Decode) {
+pub fn decode_image(cmd: DecodeCommand) {
     let data = fs::read(cmd.fr_path).unwrap_or_else(|e| {
         panic!("Failed to open: {e}");
     });

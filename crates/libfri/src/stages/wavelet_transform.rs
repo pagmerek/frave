@@ -1,5 +1,6 @@
 use crate::fractal::{LITERALS, CENTERS};
 use crate::images::{ImageMetadata, RasterImage};
+use crate::encoder::EncoderOpts;
 
 use num::Complex;
 
@@ -159,8 +160,9 @@ impl WaveletImage {
     }
 }
 
-pub fn encode(raster_image: RasterImage) -> Result<WaveletImage, String> {
-    Ok(WaveletImage::from_raster(raster_image))
+pub fn encode(raster_image: RasterImage, _encoder_opts: &EncoderOpts) -> Result<WaveletImage, String> {
+    let wavelet_img = WaveletImage::from_raster(raster_image);
+    Ok(wavelet_img)
 }
 
 pub fn decode(wavelet_image: WaveletImage) -> Result<RasterImage, String> {

@@ -1,24 +1,24 @@
 use std::fs;
 use std::path::PathBuf;
 
-use libfri::encoder::FRIEncoder;
+use libfri::encoder::{EncoderOpts, FRIEncoder};
 
 #[derive(clap::Args)]
 /// Encodes bitmap file to frave format
-pub struct Encode {
+pub struct EncodeCommand {
     pub bmp_path: PathBuf,
 
     #[arg(short, default_value_t = String::from("a.frv"))]
     pub output: String,
 }
 
-pub fn encode_image(cmd: Encode, verbose: bool) {
+pub fn encode_image(cmd: EncodeCommand, verbose: bool) {
     let img = image::open(cmd.bmp_path).unwrap_or_else(|e| {
         panic!("Failed to open: {e}");
     });
 
     let luma_img = img;
-    let encoder = FRIEncoder {};
+    let encoder = FRIEncoder::new(EncoderOpts::default());
 
     let height = luma_img.height();
     let width = luma_img.width();

@@ -4,16 +4,16 @@ use std::fs::File;
 use std::io::BufWriter;
 
 
-use libfri::encoder::FRIEncoder;
+use libfri::encoder::{EncoderOpts, FRIEncoder};
 use libfri::decoder::FRIDecoder;
 
 #[derive(clap::Args)]
-pub struct Bench {
+pub struct BenchCommand {
     pub dataset_path: PathBuf,
 
 }
 
-pub fn benchmark(cmd: Bench) {
+pub fn benchmark(cmd: BenchCommand) {
     let paths = fs::read_dir(cmd.dataset_path).expect(&format!("No such directory"));
     fs::create_dir_all("./output").unwrap(); 
     let mut compression_rates: Vec<f32> = vec![];
@@ -28,7 +28,7 @@ pub fn benchmark(cmd: Bench) {
         println!("======================================");
         println!("PNG size: {}", fs::metadata(&img_path).unwrap().len());
         let luma_img = img;
-        let encoder = FRIEncoder {};
+        let encoder = FRIEncoder::new(EncoderOpts::default());
 
         let height = luma_img.height();
         let width = luma_img.width();

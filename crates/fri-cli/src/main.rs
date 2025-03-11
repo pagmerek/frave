@@ -1,7 +1,7 @@
 pub mod commands;
 
 use clap::Parser;
-use commands::{bench, decode, encode};
+use commands::{bench, decode, encode, plots};
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -28,9 +28,10 @@ pub struct GlobalOptions {
 
 #[derive(clap::Subcommand)]
 pub enum Commands {
-    Decode(decode::Decode),
-    Encode(encode::Encode),
-    Bench(bench::Bench),
+    Decode(decode::DecodeCommand),
+    Encode(encode::EncodeCommand),
+    Bench(bench::BenchCommand),
+    Plots(plots::PlotsCommand),
 }
 
 
@@ -40,5 +41,6 @@ fn main() {
         Commands::Encode(cmd) => encode::encode_image(cmd, cli.global_options.verbose),
         Commands::Decode(cmd) => decode::decode_image(cmd),
         Commands::Bench(cmd) => bench::benchmark(cmd),
+        Commands::Plots(cmd) => plots::plot(cmd),
     }
 }

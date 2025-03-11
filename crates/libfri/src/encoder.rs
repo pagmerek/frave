@@ -14,14 +14,14 @@ enum EncoderStage {
 }
 
 impl EncoderStage {
-    fn forward(self) -> EncoderStage {
+    fn forward(self, encoder_options: &EncoderOpts) -> EncoderStage {
         match self {
             EncoderStage::RawImage(data) => EncoderStage::ChannelTransform(data),
             EncoderStage::ChannelTransform(data) => match channel_transform::encode(data) {
                 Ok(result) => EncoderStage::WaveletTransform(result),
                 Err(reason) => EncoderStage::Failure(reason),
             },
-            EncoderStage::WaveletTransform(data) => match wavelet_transform::encode(data) {
+            EncoderStage::WaveletTransform(data) => match wavelet_transform::encode(data, encoder_options) {
                 Ok(result) => EncoderStage::Quantization(result),
                 Err(reason) => EncoderStage::Failure(reason),
             },
@@ -29,7 +29,7 @@ impl EncoderStage {
                 Ok(result) => EncoderStage::EntropyEncoding(result),
                 Err(reason) => EncoderStage::Failure(reason),
             },
-            EncoderStage::EntropyEncoding(data) => match entropy_coding::encode(data) {
+            EncoderStage::EntropyEncoding(data) => match entropy_coding::encode(data, encoder_options) {
                 Ok(result) => EncoderStage::EncodedImage(result),
                 Err(reason) => EncoderStage::Failure(reason),
             },
@@ -42,9 +42,36 @@ impl EncoderStage {
     }
 }
 
-pub struct FRIEncoder {}
+pub enum EncoderQuality {
+    Low,
+    Medium,
+    High,
+    Lossless,
+}
+
+pub struct EncoderOpts {
+   pub quality: EncoderQuality,
+   pub emit_coefficients: bool,
+}
+
+pub struct FRIEncoder {
+    opts: EncoderOpts,
+}
+
+impl Default for EncoderOpts {
+    fn default() -> Self {
+        Self {
+            emit_coefficients: false,
+            quality: EncoderQuality::Lossless,
+        }
+    }
+}
 
 impl FRIEncoder {
+    pub fn new(opts: EncoderOpts) -> FRIEncoder {
+        FRIEncoder{ opts }
+    }
+
     pub fn encode(
         self,
         data: Vec<u8>,
@@ -59,7 +86,7 @@ impl FRIEncoder {
 
         let mut stage = EncoderStage::RawImage(image);
         while !matches!(stage, EncoderStage::SerializedImage(_) | EncoderStage::Failure(_)) {
-            stage = stage.forward();
+            stage = stage.forward(&self.opts);
         }
 
         match stage {

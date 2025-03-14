@@ -68,7 +68,7 @@ fn extract_coefficients(
     }
 
     coefficients[ps] = try_apply(right_coef, left_coef, |r, l| (r - l) / 2);
-    try_apply(right_coef, left_coef, |r, l| (r + l) / 2)
+    try_apply(right_coef, left_coef, |r, l| r + l / 2)
 }
 
 impl RasterImage {
@@ -103,8 +103,8 @@ fn extract_values(
         dp: usize,
     ) {
         if let Some(dif) = wavelet_coefs[ps] {
-            let left_subtree: i32 = ((sum - dif) * 2) >> 1;
-            let right_subtree: i32 = ((sum + dif) * 2) >> 1;
+            let left_subtree: i32 = sum - dif;
+            let right_subtree: i32 = sum + dif;
             if dp > 0 {
                 self.extract_values(wavelet_coefs, channel, left_subtree, ps << 1, cn, dp - 1);
                 self.extract_values(

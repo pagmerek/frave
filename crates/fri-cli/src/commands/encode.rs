@@ -10,6 +10,9 @@ pub struct EncodeCommand {
 
     #[arg(short, default_value_t = String::from("a.frv"))]
     pub output: String,
+
+    #[arg(long, default_value_t = false)]
+    pub emit_coefficients: bool,
 }
 
 pub fn encode_image(cmd: EncodeCommand, verbose: bool) {
@@ -18,7 +21,10 @@ pub fn encode_image(cmd: EncodeCommand, verbose: bool) {
     });
 
     let luma_img = img;
-    let encoder = FRIEncoder::new(EncoderOpts::default());
+    let encoder = FRIEncoder::new(EncoderOpts {
+        emit_coefficients: cmd.emit_coefficients,
+        ..Default::default() 
+    });
 
     let height = luma_img.height();
     let width = luma_img.width();

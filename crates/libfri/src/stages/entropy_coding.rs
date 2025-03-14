@@ -18,7 +18,7 @@ fn emit_coefficients(layer: &Vec<&i32>, layer_id: usize, layer_channel: usize) {
     std::fs::create_dir_all("./coefficients").unwrap(); 
     let mut f = File::create(format!("coefficients/{}_layer_{}.coef", layer_channel, layer_id)).expect("Unable to create coef file");                                                                                                          
     for i in layer {                                                                                                                                                                  
-        write!(f, "{}\n", i);
+        write!(f, "{}\n", i).unwrap();
     }     
 }
 

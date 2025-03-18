@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::fs;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Read};
 
 
 use libfri::encoder::{EncoderOpts, FRIEncoder};
@@ -19,6 +19,7 @@ pub fn benchmark(cmd: BenchCommand) {
     let mut compression_rates: Vec<f32> = vec![];
     for path in paths {
         let mut img_path = path.unwrap().path();
+        let original_path = img_path.clone();
         let img = match image::open(&img_path) {
             Ok(data) => data,
             Err(_) => continue,
@@ -27,13 +28,12 @@ pub fn benchmark(cmd: BenchCommand) {
         println!("COMPRESSION {}", img_path.file_name().unwrap().to_str().unwrap());
         println!("======================================");
         println!("PNG size: {}", fs::metadata(&img_path).unwrap().len());
-        let luma_img = img;
         let encoder = FRIEncoder::new(EncoderOpts::default());
 
-        let height = luma_img.height();
-        let width = luma_img.width();
-        let color = luma_img.color();
-        let data = luma_img.into_bytes();
+        let height = img.height();
+        let width = img.width();
+        let color = img.color();
+        let data = img.into_bytes();
 
         let frifcolor = match color {
             image::ColorType::L8 => libfri::images::ColorSpace::Luma,
@@ -71,10 +71,23 @@ pub fn benchmark(cmd: BenchCommand) {
                 let mut output_path: PathBuf = PathBuf::from(r"./output/");
                 output_path.push(img_path.file_name().unwrap());
                 output_path.set_extension("bmp");
-                let file = File::create(output_path).unwrap();
+                let file = File::create(&output_path).unwrap();
                 let ref mut w = BufWriter::new(file);
 
                 img.write_to(w, image::ImageOutputFormat::Bmp).expect("Failed to write image");
+
+                let original_img = match image::open(&original_path) {
+                    Ok(data) => data.into_bytes(),
+                    Err(_) => continue,
+                };
+                let decoded_img = img.bytes();
+                let len = original_img.len() as f32;
+
+                let mut mse: u32 = 0;
+                for (x, y) in decoded_img.into_iter().zip(original_img.into_iter()) {
+                    mse += (x.unwrap() - y).pow(2) as u32;
+                }
+                println!("MSE: {}", mse as f32/len);
             }
             Err(msg) => println!("Cannot decode, reason: {msg}"),
         }
@@ -86,3 +99,4 @@ pub fn benchmark(cmd: BenchCommand) {
     println!("AVG compression rate: {}%", avg_compression_rate);
 
 }
+

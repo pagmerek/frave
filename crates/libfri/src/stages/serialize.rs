@@ -79,7 +79,7 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
                     .collect::<Vec<u8>>(),
             );
             serial.extend_from_slice(
-                &ctx.freq
+                &ctx.freqs
                     .iter()
                     .flat_map(|s| s.to_le_bytes())
                     .collect::<Vec<u8>>(),
@@ -147,17 +147,17 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
 
                 let symbols = bytes[offset..offset + hist_len]
                     .chunks_exact(4)
-                    .map(|e| i32::from_le_bytes(e.try_into().unwrap()))
+                    .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
                     .collect();
                 offset += hist_len;
 
-                let freq = bytes[offset..offset + hist_len]
+                let freqs = bytes[offset..offset + hist_len]
                     .chunks_exact(4)
                     .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
                     .collect();
                 offset += hist_len;
 
-                ans_contexts.push(AnsContext { symbols, freq })
+                ans_contexts.push(AnsContext { symbols, freqs })
             }
             Segments::DAT => {
                 offset += 2;
@@ -185,12 +185,3 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
     } 
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn name() {
-        todo!();
-    }
-}

@@ -79,19 +79,33 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
             
             let layer: Vec<u32> = unpacked_layer.into_iter().map(pack_signed).collect();
 
-            let mut freqs = get_freqs(&layer);
+            let counter = layer
+                .iter()
+                .counts();
 
-            let counter = layer.iter().counts();
-            let symbols = counter.keys().map(|e| **e).collect::<Vec<u32>>();
+            let mut histogram : Vec<(&u32, usize)> = counter
+                .into_iter()
+                .collect();
 
-            let cum_freqs = normalize_freqs(&mut freqs, 1 << max_freq_bits);
+            histogram.sort_by_key(|(a, _b)| *a);
 
-            let symbol_map = freqs_to_enc_symbols(&cum_freqs, &freqs, max_freq_bits);
+            let mut freqs: Vec<u32> = histogram.clone().into_iter().map(|(_, b)| b as u32).collect();
+            let symbols: Vec<u32> = histogram.clone().into_iter().map(|(a, _)| *a).collect();
+
+            let cdf = normalize_freqs(&mut freqs, 1 << max_freq_bits);
+            //let cdf = cum_sum(&freqs);
+
+            let symbol_map = freqs_to_enc_symbols(&cdf, &freqs, max_freq_bits);
+
+            let cdf_map = symbols
+                .iter()
+                .zip(cdf)
+                .collect::<HashMap<&u32, u32>>();
 
             layer
                 .iter()
                 .rev()
-                .for_each(|s| encoder.put_at(i, &symbol_map[&cum_freqs[*s as usize]]));
+                .for_each(|s| encoder.put_at(i, &symbol_map[&cdf_map[s]]));
 
             ans_contexts.push(AnsContext { symbols, freqs });
         }
@@ -133,12 +147,6 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
                 .count(),
         );
 
-        let true_depth =
-            utils::get_prev_power_two(decoded.coefficients[channel].iter().flatten().count())
-                .trailing_zeros()
-                + 1;
-        let scale_bits = true_depth;
-
         let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(bytes);
         let mut last = 0;
         for (i, layer) in layers.into_iter().enumerate() {
@@ -152,11 +160,15 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
 
             cum_freqs.sort_unstable();
 
+            let max_freq_bits = utils::get_prev_power_two(layer)
+                    .trailing_zeros()
+                    + 1;
+
             for _l in 0..layer {
                 let cum_freq_decoded =
-                    find_nearest_or_equal(decoder.get_at(i, scale_bits), &cum_freqs);
+                    find_nearest_or_equal(decoder.get_at(i, max_freq_bits), &cum_freqs);
                 let symbol = symbol_map[&cum_freq_decoded];
-                decoder.advance_step_at(i, &cum_freq_to_symbols[&cum_freq_decoded], scale_bits);
+                decoder.advance_step_at(i, &cum_freq_to_symbols[&cum_freq_decoded], max_freq_bits);
                 decoder.renorm_at(i);
                 last = insert_after_none_starting_from(
                     unpack_signed(symbol),
@@ -208,40 +220,16 @@ fn cum_sum(sum: &[u32]) -> Vec<u32> {
 
 fn normalize_freqs(freqs: &mut Vec<u32>, target_total: u32) -> Vec<u32> {
     let mut cum_freqs = cum_sum(freqs);
-    let cur_total = *cum_freqs.last().unwrap();
+    let cur_total = *cum_freqs.last().unwrap() + freqs.last().unwrap();
     for i in 1..cum_freqs.len() {
         cum_freqs[i] = ((target_total as u64 * cum_freqs[i] as u64)/cur_total as u64) as u32; 
     }
-
-  //  for i in 0..(cum_freqs.len() - 1) {
-  //      if freqs[i] > 0 && cum_freqs[i+1] == cum_freqs[i] {
-  //          let mut best_freq: u32 = !0;
-  //          let mut best_steal: usize = usize::MAX;
-  //          for j in 0..(cum_freqs.len() - 1) {
-  //              let freq = cum_freqs[j+1] - cum_freqs[j];
-  //              if freq > 1 && freq < best_freq {
-  //                  best_freq = freq;
-  //                  best_steal = j;
-  //              }
-  //          }
-  //          if best_steal < i {
-  //              for j in (best_steal + 1)..=i {
-  //                  cum_freqs[j] -= 1;
-  //              }
-  //          } else {
-  //              for j in (i+1)..=best_steal {
-  //                  cum_freqs[j] += 1;
-  //              }
-  //          }
-  //      }
-  //  }
 
     for i in 0..(cum_freqs.len() - 1) {
         freqs[i] = cum_freqs[i+1] - cum_freqs[i];
     }
 
     cum_freqs
-
 }
 
 // TODO: Implement Alias sampling method
@@ -263,7 +251,7 @@ fn freqs_to_enc_symbols(
         .iter()
         .zip(freqs.iter())
         .map(|(&cum_freq, &freq)| (cum_freq, B64RansEncSymbol::new(cum_freq, freq, depth)))
-        .collect::<HashMap<u32, B64RansEncSymbol>>()
+        .collect()
 }
 
 #[must_use]
@@ -272,7 +260,7 @@ fn freqs_to_dec_symbols(cum_freqs: &[u32], freqs: &[u32]) -> HashMap<u32, B64Ran
         .iter()
         .zip(freqs.iter())
         .map(|(&cum_freqs, &freqs)| (cum_freqs, B64RansDecSymbol::new(cum_freqs, freqs)))
-        .collect::<HashMap<u32, B64RansDecSymbol>>()
+        .collect()
 }
 
 #[cfg(test)]

@@ -54,8 +54,6 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
         layers.push(&channel_coefficients[1 << (depth - 1)..]);
         layers.push(&channel_coefficients[1 << (depth - 2)..1 << (depth - 1)]);
         layers.push(&channel_coefficients[..1 << (depth - 2)]);
-        //layers.push(&channel_coefficients[..]);
-
 
         let mut encoder: B64RansEncoderMulti<3> =
             B64RansEncoderMulti::new(2*image.coefficients[channel].iter().flatten().count());
@@ -111,6 +109,7 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
         }
         encoder.flush_all();
         let data = encoder.data().to_owned();
+        dbg!(data.len());
         channel_data[channel] = Some((ans_contexts, data));
     }
     Ok(CompressedImage {
@@ -149,13 +148,13 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
 
         let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(bytes);
         let mut last = 0;
-        for (i, layer) in layers.into_iter().enumerate() {
-            let mut cum_freqs = cum_sum(&ans_contexts[2 - i].freqs);
-            let cum_freq_to_symbols = freqs_to_dec_symbols(&cum_freqs, &ans_contexts[2 - i].freqs);
+        for (i, (layer, ans_context)) in layers.into_iter().zip(ans_contexts.into_iter().rev()).enumerate() {
+            let mut cum_freqs = cum_sum(&ans_context.freqs);
+            let cum_freq_to_symbols = freqs_to_dec_symbols(&cum_freqs, &ans_context.freqs);
             let symbol_map = cum_freqs
                 .clone()
                 .into_iter()
-                .zip(ans_contexts[2 - i].symbols.clone())
+                .zip(ans_context.symbols.clone())
                 .collect::<HashMap<u32, u32>>();
 
             cum_freqs.sort_unstable();

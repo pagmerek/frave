@@ -10,7 +10,8 @@ pub fn encode(mut image: WaveletImage) -> Result<WaveletImage, String> {
         for (i, coef_opt) in coefs.iter_mut().enumerate() {
             if let Some(coef) = coef_opt {
                 let layer = utils::get_prev_power_two(i + 1).trailing_zeros();
-                *coef /= quantization_matrix[layer as usize];
+                    *coef /=  quantization_matrix[layer as usize];
+                        //(layer as i32)/5 + 1;
             }
         }
     }
@@ -24,7 +25,9 @@ pub fn decode(mut image: WaveletImage) -> Result<WaveletImage, String> {
         for (i, coef_opt) in coefs.iter_mut().enumerate() {
             if let Some(coef) = coef_opt {
                 let layer = utils::get_prev_power_two(i + 1).trailing_zeros();
-                *coef *= quantization_matrix[layer as usize];
+                *coef *=  quantization_matrix[layer as usize];
+                //*coef *= (layer as i32)/5 +1
+
             }
         }
     }

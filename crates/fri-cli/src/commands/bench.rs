@@ -3,7 +3,6 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufWriter, Read};
 
-
 use libfri::encoder::{EncoderOpts, FRIEncoder};
 use libfri::decoder::FRIDecoder;
 
@@ -17,6 +16,7 @@ pub fn benchmark(cmd: BenchCommand) {
     let paths = fs::read_dir(cmd.dataset_path).expect(&format!("No such directory"));
     fs::create_dir_all("./output").unwrap(); 
     let mut compression_rates: Vec<f32> = vec![];
+    let mut compression_rates_png: Vec<f32> = vec![];
     for path in paths {
         let mut img_path = path.unwrap().path();
         let original_path = img_path.clone();
@@ -27,7 +27,8 @@ pub fn benchmark(cmd: BenchCommand) {
 
         println!("COMPRESSION {}", img_path.file_name().unwrap().to_str().unwrap());
         println!("======================================");
-        println!("PNG size: {}", fs::metadata(&img_path).unwrap().len());
+        let png_size = fs::metadata(&img_path).unwrap().len();
+        println!("PNG size: {}", png_size);
         let encoder = FRIEncoder::new(EncoderOpts::default());
 
         let height = img.height();
@@ -45,12 +46,14 @@ pub fn benchmark(cmd: BenchCommand) {
         let result = encoder.encode(data, height, width, frifcolor).unwrap_or_else(|e| panic!("Cannot encode {}, reason: {}", img_path.file_name().unwrap().to_str().unwrap(), e));
 
         let compression_rate = (uncompressed_size as f32 - result.len() as f32)/uncompressed_size as f32 * 100.;
+        let png_compression_rate = (uncompressed_size as f32 - png_size as f32)/uncompressed_size as f32 * 100.;
         println!("FILE {}", img_path.file_name().unwrap().to_str().unwrap());
         println!("Before compression size: {}", uncompressed_size);
         println!("After compression size: {}", result.len());
         println!("Compression rate: {}%", compression_rate);
         img_path.set_extension("frif");
         compression_rates.push(compression_rate);
+        compression_rates_png.push(png_compression_rate);
 
         if false {
             fs::write(&img_path, &result).unwrap_or_else(|e| panic!("Failed to encode frv image: {e}"));
@@ -95,7 +98,9 @@ pub fn benchmark(cmd: BenchCommand) {
     }
 
     let avg_compression_rate = compression_rates.iter().sum::<f32>() / compression_rates.len() as f32;
+    let avg_png_compression_rate = compression_rates_png.iter().sum::<f32>() / compression_rates_png.len() as f32;
     println!("====SUMMARY====");
+    println!("AVG PNG compression rate: {}%", avg_png_compression_rate);
     println!("AVG compression rate: {}%", avg_compression_rate);
 
 }

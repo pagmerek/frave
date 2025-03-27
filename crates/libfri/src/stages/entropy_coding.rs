@@ -51,11 +51,12 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
         let mut layers: Vec<&[Option<i32>]> = vec![];
         let channel_coefficients = &image.coefficients[channel];
 
-        layers.push(&channel_coefficients[1 << (depth - 1)..]);
-        layers.push(&channel_coefficients[1 << (depth - 2)..1 << (depth - 1)]);
-        layers.push(&channel_coefficients[..1 << (depth - 2)]);
+        //layers.push(&channel_coefficients[1 << (depth - 1)..]);
+        //layers.push(&channel_coefficients[1 << (depth - 2)..1 << (depth - 1)]);
+        //layers.push(&channel_coefficients[..1 << (depth - 2)]);
+        layers.push(&channel_coefficients[..]);
 
-        let mut encoder: B64RansEncoderMulti<3> =
+        let mut encoder: B64RansEncoderMulti<1> =
             B64RansEncoderMulti::new(2*image.coefficients[channel].iter().flatten().count());
 
         let mut ans_contexts = vec![];
@@ -90,6 +91,9 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
             let mut freqs: Vec<u32> = histogram.clone().into_iter().map(|(_, b)| b as u32).collect();
             let symbols: Vec<u32> = histogram.clone().into_iter().map(|(a, _)| *a).collect();
 
+            //let symbols: Vec<u32> = (0..ALPHABET_SIZE).map(|x| x as u32).collect();
+            //let mut freqs = get_freqs(&layer);
+            
             let cdf = normalize_freqs(&mut freqs, 1 << max_freq_bits);
             //let cdf = cum_sum(&freqs);
 
@@ -109,7 +113,6 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
         }
         encoder.flush_all();
         let data = encoder.data().to_owned();
-        dbg!(data.len());
         channel_data[channel] = Some((ans_contexts, data));
     }
     Ok(CompressedImage {
@@ -128,25 +131,13 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
         let depth = decoded.depth;
 
         layers.push(
-            decoded.coefficients[channel][..1 << (depth - 2)]
-                .iter()
-                .flatten()
-                .count(),
-        );
-        layers.push(
-            decoded.coefficients[channel][1 << (depth - 2)..1 << (depth - 1)]
-                .iter()
-                .flatten()
-                .count(),
-        );
-        layers.push(
-            decoded.coefficients[channel][1 << (depth - 1)..]
+            decoded.coefficients[channel][..]
                 .iter()
                 .flatten()
                 .count(),
         );
 
-        let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(bytes);
+        let mut decoder: B64RansDecoderMulti<1> = B64RansDecoderMulti::new(bytes);
         let mut last = 0;
         for (i, (layer, ans_context)) in layers.into_iter().zip(ans_contexts.into_iter().rev()).enumerate() {
             let mut cum_freqs = cum_sum(&ans_context.freqs);
@@ -223,6 +214,32 @@ fn normalize_freqs(freqs: &mut Vec<u32>, target_total: u32) -> Vec<u32> {
     for i in 1..cum_freqs.len() {
         cum_freqs[i] = ((target_total as u64 * cum_freqs[i] as u64)/cur_total as u64) as u32; 
     }
+
+    //NOTE:  Fixing nuked values -> commented out due to performance degradation
+    //for i in 0..cum_freqs.len() - 1 {
+    //    if freqs[i] != 0 && cum_freqs[i+1]  == cum_freqs[i] {
+    //        let mut best_freq: u32 = u32::MAX;
+    //        let mut best_steal: usize = usize::MAX;
+    //        for j in 0 .. cum_freqs.len() {
+    //            let freq = cum_freqs[j+1] - cum_freqs[j];
+    //            if freq > 1 && freq < best_freq {
+    //                best_freq = freq;
+    //                best_steal = j;
+    //            }
+    //        }
+    //
+    //        if best_steal < i {
+    //            for j in (best_steal+1)..=i {
+    //                cum_freqs[j] -= 1;
+    //            }
+    //        } else {
+    //            for j in (i+1)..= best_steal {
+    //                cum_freqs[j] += 1;
+    //            }
+    //        }
+    //
+    //    }
+    //}
 
     for i in 0..(cum_freqs.len() - 1) {
         freqs[i] = cum_freqs[i+1] - cum_freqs[i];

@@ -46,55 +46,50 @@ impl RasterImage {
             metadata: wavelet_image.metadata,
         };
 
-        for i in 0..raster.metadata.colorspace.num_channels() {
-            if let Some(root) = wavelet_image.coefficients[i][0] {
-                raster.extract_values(
-                    &wavelet_image.coefficients[i],
-                    i,
-                    root,
-                    1,
-                    wavelet_image.center,
-                    wavelet_image.depth as usize - 1,
-                );
-            }
-        }
+        raster.extract_values(
+            &wavelet_image.coefficients,
+            wavelet_image.center,
+            wavelet_image.depth,
+        );
+
         return raster;
     }
 
     fn extract_values(
         &mut self,
-        wavelet_coefs: &Vec<Option<i32>>,
-        channel: usize,
-        sum: i32,
-        position: usize,
+        wavelet_coefs: &[Vec<Option<i32>>; 3],
         center: Complex<i32>,
-        depth: usize,
+        depth: u8,
     ) {
-        if let Some(dif) = wavelet_coefs[position] {
-            let right_subtree: i32 = sum - dif / 2;
-            let left_subtree: i32 = dif + right_subtree;
-            if depth > 0 {
-                self.extract_values(
-                    wavelet_coefs,
-                    channel,
-                    left_subtree,
-                    position << 1,
-                    center,
-                    depth - 1,
-                );
-                self.extract_values(
-                    wavelet_coefs,
-                    channel,
-                    right_subtree,
-                    (position << 1) + 1,
-                    center + LITERALS[depth],
-                    depth - 1,
-                );
-            } else {
-                let secondary_x = center.re + LITERALS[0].re;
-                let secondary_y = center.im + LITERALS[0].im;
-                self.set_pixel(center.re, center.im, left_subtree, channel);
-                self.set_pixel(secondary_x, secondary_y, right_subtree, channel);
+        let mut image_positions = vec![Complex::<i32>::new(0, 0); 1 << (depth + 1)];
+        image_positions[1] = center;
+        for level in 0..depth {
+            for pos in 1 << level..1 << (level + 1) {
+                image_positions[2 * pos] = image_positions[pos];
+                image_positions[2 * pos + 1] =
+                    image_positions[pos] + LITERALS[(depth - level - 1) as usize];
+            }
+        }
+        for channel in 0..self.metadata.colorspace.num_channels() {
+            let mut low_pass_values = vec![0; 1 << depth];
+            low_pass_values[1] = wavelet_coefs[channel][0].unwrap();
+
+            for level in 0..depth {
+                for pos in 1 << level..1 << (level + 1) {
+                    if let Some(dif) = wavelet_coefs[channel][pos] {
+                        let right_subtree: i32 = low_pass_values[pos] - dif / 2;
+                        let left_subtree: i32 = dif + right_subtree;
+                        if level == depth - 1 {
+                            let left_pixel = image_positions[2 * pos];
+                            let right_pixel = image_positions[2 * pos + 1];
+                            self.set_pixel(left_pixel.re, left_pixel.im, left_subtree, channel);
+                            self.set_pixel(right_pixel.re, right_pixel.im, right_subtree, channel);
+                        } else {
+                            low_pass_values[2 * pos] = left_subtree;
+                            low_pass_values[2 * pos + 1] = right_subtree;
+                        }
+                    }
+                }
             }
         }
     }
@@ -105,34 +100,6 @@ fn extract_coefficients(
     center: Complex<i32>,
     depth: u8,
 ) -> [Vec<Option<i32>>; 3] {
-    //fn extract_coefficients(
-    //    coefficients: &mut Vec<Option<i32>>,
-    //    channel: usize,
-    //    raster_image: &RasterImage,
-    //    center: Complex<i32>,
-    //    position: usize,
-    //    depth: u8,
-    //) -> Option<i32> {
-    //    let (left_coef, right_coef): (Option<i32>, Option<i32>);
-    //    if depth > 0 {
-    //        left_coef = extract_coefficients(coefficients, channel, raster_image, center, position << 1, depth - 1);
-    //        right_coef = extract_coefficients(
-    //            coefficients,
-    //            channel,
-    //            raster_image,
-    //            center + LITERALS[depth as usize],
-    //            (position << 1) + 1,
-    //            depth - 1,
-    //        );
-    //    } else {
-    //        left_coef = raster_image.get_pixel(center.re, center.im, channel);
-    //        right_coef =
-    //            raster_image.get_pixel(center.re + LITERALS[0].re, center.im + LITERALS[0].im, channel);
-    //    }
-    //
-    //    coefficients[position] = try_apply(left_coef, right_coef, |r, l| (r - l), 0);
-    //    try_apply(right_coef, coefficients[position], |r, l| (r + l/2), 0)
-    //}
     let mut coefficients = [
         vec![None; 1 << depth + 1],
         vec![None; 1 << depth + 1],
@@ -178,27 +145,31 @@ fn extract_coefficients(
                 );
             }
             // compute local slope
-            for pos in 1 << level..1 << (level + 1) {
-                let (left_coef, right_coef): (Option<i32>, Option<i32>);
-                if pos - 1 < 1 << level {
-                    left_coef = low_pass_values[pos];
-                } else {
-                    left_coef = low_pass_values[pos - 1];
-                }
-                if pos + 1 >= 1 << (level + 1) {
-                    right_coef = low_pass_values[pos];
-                } else {
-                    right_coef = low_pass_values[pos + 1];
-                }
-
-                if coefficients[channel][pos].is_some() && left_coef.is_some() && right_coef.is_some() {
-                    let slope = try_apply(left_coef, right_coef, |l, r| (l - r + 2)/4, 0);
-
-                    // update
-                    coefficients[channel][pos] =
-                        try_apply(coefficients[channel][pos], slope, |l, r| l + r, 0)
-                }
-            }
+            //for pos in 1 << level..1 << (level + 1) {
+            //    if coefficients[channel][pos].is_some() {
+            //        let (left_coef, right_coef): (Option<i32>, Option<i32>);
+            //        let left_ind = (1<<level..pos).rev().find(|e| low_pass_values[*e].is_some());
+            //        let right_ind = (pos..1<<(level+1)).find(|e| low_pass_values[*e].is_some());
+            //
+            //        if let Some(ind) = left_ind {
+            //            left_coef = low_pass_values[ind];
+            //        } else {
+            //            left_coef = low_pass_values[pos];
+            //        }
+            //
+            //        if let Some(ind) = right_ind {
+            //            right_coef = low_pass_values[ind];
+            //        } else {
+            //            right_coef = low_pass_values[pos];
+            //        }
+            //
+            //        let slope = try_apply(left_coef, right_coef, |l, r| (l - r) >> 2, 0);
+            //
+            //        // update
+            //        coefficients[channel][pos] =
+            //            try_apply(coefficients[channel][pos], slope, |l, r| l - r, 0)
+            //    }
+            //}
         }
         coefficients[channel][0] = low_pass_values[1];
     }
@@ -222,20 +193,9 @@ impl WaveletImage {
     pub fn from_raster(raster_image: RasterImage) -> WaveletImage {
         let (depth, center) =
             calculate_depth_center(raster_image.metadata.width, raster_image.metadata.height);
+
         let coefficients = extract_coefficients(&raster_image, center, depth);
-        //    let left_coef =
-        //        extract_coefficients(&mut coefficients[i], i, &raster_image, center, 2, depth - 2);
-        //    let right_coef = extract_coefficients(
-        //        &mut coefficients[i],
-        //        i,
-        //        &raster_image,
-        //        center + LITERALS[depth as usize - 1],
-        //        3,
-        //        depth - 2,
-        //    );
-        //    coefficients[i][1] = try_apply(left_coef, right_coef, |r, l| (r - l), 0);
-        //    coefficients[i][0] = try_apply(right_coef, coefficients[i][1], |r, l| (r + l/2), 0);
-        //}
+
         WaveletImage {
             metadata: raster_image.metadata,
             depth,
@@ -276,6 +236,5 @@ mod test {
         let (depth, center) = calculate_depth_center(img.metadata.width, img.metadata.height);
 
         let coefficients = extract_coefficients(&img, center, depth - 1);
-        dbg!(&coefficients[0].iter().flatten().count());
     }
 }

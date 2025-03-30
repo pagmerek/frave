@@ -4,6 +4,8 @@ use crate::stages::wavelet_transform::WaveletImage;
 use crate::utils;
 
 use itertools::Itertools;
+use num::Complex;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -14,17 +16,19 @@ use rans::RansDecoderMulti;
 use rans::RansEncoderMulti;
 use rans::{RansDecSymbol, RansEncSymbol};
 
-fn emit_coefficients(layer: &Vec<i32>, layer_id: usize, layer_channel: usize) {
+fn emit_coefficients(layer: &Vec<i32>, center: Complex<i32>, layer_channel: usize) {
     std::fs::create_dir_all("./coefficients").unwrap();
     let mut f = File::create(format!(
-        "coefficients/{}_layer_{}.coef",
-        layer_channel, layer_id
+        "coefficients/{}-fractal-{}-{}.coef",
+        layer_channel, center.re, center.im
     ))
     .expect("Unable to create coef file");
     for i in layer {
         write!(f, "{}\n", i).unwrap();
     }
 }
+
+const ALPHABET_SIZE: usize = 512;
 
 fn pack_signed(k: i32) -> u32 {
     if k >= 0 {
@@ -42,74 +46,233 @@ fn unpack_signed(k: u32) -> i32 {
     }
 }
 
-pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<CompressedImage, String> {
-    let mut channel_data: [Option<(Vec<AnsContext>, Vec<u8>)>; 3] = [None, None, None];
+fn insert_after_none_starting_from(element: i32, i: usize, vec: &mut Vec<Option<i32>>) -> usize {
+    let ind = (i..vec.len()).find(|j| vec[*j].is_some()).unwrap();
+    vec[ind] = Some(element);
+    ind + 1
+}
 
-    for channel in 0..image.metadata.colorspace.num_channels() {
-        let depth = image.depth;
+#[derive(Debug)]
+pub struct AnsContext {
+    pub symbols: Vec<u32>,
+    pub freqs: [u32; ALPHABET_SIZE],
+}
 
+impl AnsContext {
+    fn new() -> Self {
+        AnsContext {
+            freqs: [0; ALPHABET_SIZE],
+            symbols: (0..ALPHABET_SIZE).map(|x| x as u32).collect(),
+        }
+    }
+
+    fn get_freqs(coefs: &Vec<u32>) -> [u32; ALPHABET_SIZE] {
+        let mut freqs = [0; ALPHABET_SIZE];
+        for coef in coefs {
+            freqs[*coef as usize] += 1;
+        }
+        return freqs;
+    }
+
+    fn get_cdf(&self) -> Vec<u32> {
+        self.freqs
+            .iter()
+            .scan(0_u32, |acc, x| {
+                let val = *acc;
+                *acc += x;
+                Some(val)
+            })
+            .collect::<Vec<u32>>()
+    }
+
+    fn update_freqs(&mut self, new_freqs: [u32; ALPHABET_SIZE]) {
+        for i in 0..ALPHABET_SIZE {
+            self.freqs[i] += new_freqs[i];
+        }
+    }
+
+    fn normalize_freqs(&mut self, target_total: u32) -> Vec<u32> {
+        let mut cum_freqs = self.get_cdf();
+        let cur_total = *cum_freqs.last().unwrap() + self.freqs.last().unwrap();
+        for i in 1..cum_freqs.len() {
+            cum_freqs[i] = ((target_total as u64 * cum_freqs[i] as u64) / cur_total as u64) as u32;
+        }
+
+        //NOTE:  Fixing nuked values -> commented out due to performance degradation
+        for i in 0..cum_freqs.len() - 1 {
+            if self.freqs[i] != 0 && cum_freqs[i+1]  == cum_freqs[i] {
+                let mut best_freq: u32 = u32::MAX;
+                let mut best_steal: usize = usize::MAX;
+                for j in 0 .. cum_freqs.len() - 1 {
+                    let freq = cum_freqs[j+1] - cum_freqs[j];
+                    if freq > 1 && freq < best_freq {
+                        best_freq = freq;
+                        best_steal = j;
+                    }
+                }
+
+                if best_steal < i {
+                    for j in (best_steal+1)..=i {
+                        cum_freqs[j] -= 1;
+                    }
+                } else {
+                    for j in (i+1)..= best_steal {
+                        cum_freqs[j] += 1;
+                    }
+                }
+
+            }
+        }
+
+        for i in 0..(cum_freqs.len() - 1) {
+            self.freqs[i] = cum_freqs[i + 1] - cum_freqs[i];
+        }
+
+        cum_freqs
+    }
+
+    fn freqs_to_enc_symbols(&self, max_freq_bits: u32) -> HashMap<u32, B64RansEncSymbol> {
+        let cum_freqs = self.get_cdf();
+
+        cum_freqs
+            .iter()
+            .zip(self.freqs.iter())
+            .map(|(&cum_freq, &freq)| {
+                (
+                    cum_freq,
+                    B64RansEncSymbol::new(cum_freq, freq, max_freq_bits),
+                )
+            })
+            .collect()
+    }
+
+    fn freqs_to_dec_symbols(&self) -> HashMap<u32, B64RansDecSymbol> {
+        let cum_freqs = self.get_cdf();
+
+        cum_freqs
+            .iter()
+            .zip(self.freqs.iter())
+            .map(|(&cum_freqs, &freqs)| (cum_freqs, B64RansDecSymbol::new(cum_freqs, freqs)))
+            .collect()
+    }
+}
+
+// TODO: Implement Alias sampling method
+#[must_use]
+fn find_nearest_or_equal(cum_freq: u32, cum_freqs: &[u32]) -> u32 {
+    match cum_freqs.binary_search(&cum_freq) {
+        Ok(x) => cum_freqs[x],
+        Err(x) => cum_freqs[x-1],
+    }
+}
+
+fn prepare_contexts(image: &WaveletImage, channel: usize) -> Vec<AnsContext> {
+    let mut ans_contexts = vec![AnsContext::new()];
+
+    for (_, fractal) in image.fractal_lattice.iter() {
         let mut layers: Vec<&[Option<i32>]> = vec![];
-        let channel_coefficients = &image.coefficients[channel];
+        let channel_coefficients = &fractal.coefficients[channel];
 
-        //layers.push(&channel_coefficients[1 << (depth - 1)..]);
-        //layers.push(&channel_coefficients[1 << (depth - 2)..1 << (depth - 1)]);
-        //layers.push(&channel_coefficients[..1 << (depth - 2)]);
         layers.push(&channel_coefficients[..]);
 
-        let mut encoder: B64RansEncoderMulti<1> =
-            B64RansEncoderMulti::new(2*image.coefficients[channel].iter().flatten().count());
-
-        let mut ans_contexts = vec![];
-        for (i, sparse_layer) in layers.into_iter().enumerate() {
+        for sparse_layer in layers.into_iter() {
             let unpacked_layer = sparse_layer
                 .into_iter()
                 .flatten()
                 .map(|c| *c)
                 .collect::<Vec<i32>>();
 
-            if encoder_opts.emit_coefficients {
-                emit_coefficients(&unpacked_layer, i, channel)
-            }
-
-            let max_freq_bits =
-                utils::get_prev_power_two(unpacked_layer.len())
-                .trailing_zeros()
-                + 1;
-            
             let layer: Vec<u32> = unpacked_layer.into_iter().map(pack_signed).collect();
+            let freqs = AnsContext::get_freqs(&layer);
 
-            let counter = layer
-                .iter()
-                .counts();
+            ans_contexts[0].update_freqs(freqs);
+        }
+    }
 
-            let mut histogram : Vec<(&u32, usize)> = counter
-                .into_iter()
-                .collect();
+    for ctx in ans_contexts.iter_mut() {
+        let max_freq_bits =
+            utils::get_prev_power_two(ctx.freqs.iter().sum::<u32>() as usize).trailing_zeros();
+        ctx.normalize_freqs(1 << max_freq_bits);
+    }
 
-            histogram.sort_by_key(|(a, _b)| *a);
+    ans_contexts
+}
 
-            let mut freqs: Vec<u32> = histogram.clone().into_iter().map(|(_, b)| b as u32).collect();
-            let symbols: Vec<u32> = histogram.clone().into_iter().map(|(a, _)| *a).collect();
+fn order_complex<T: std::cmp::PartialEq + std::cmp::PartialOrd>(
+    a: &Complex<T>,
+    b: &Complex<T>,
+) -> Ordering {
+    if a.re > b.re {
+        Ordering::Greater
+    } else if a.re < b.re {
+        Ordering::Less
+    } else if a.re == b.re && a.im > b.im {
+        Ordering::Greater
+    } else if a.re == b.re && a.im < b.im {
+        Ordering::Less
+    } else {
+        Ordering::Equal
+    }
+}
 
-            //let symbols: Vec<u32> = (0..ALPHABET_SIZE).map(|x| x as u32).collect();
-            //let mut freqs = get_freqs(&layer);
-            
-            let cdf = normalize_freqs(&mut freqs, 1 << max_freq_bits);
-            //let cdf = cum_sum(&freqs);
+pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<CompressedImage, String> {
+    let center = Complex::<i32>::new(
+        image.metadata.width as i32 / 2,
+        image.metadata.height as i32 / 2,
+    );
 
-            let symbol_map = freqs_to_enc_symbols(&cdf, &freqs, max_freq_bits);
+    let middle = image
+        .fractal_lattice
+        .get(&center)
+        .expect("middle must be inside of the image");
 
-            let cdf_map = symbols
-                .iter()
-                .zip(cdf)
-                .collect::<HashMap<&u32, u32>>();
+    let mut channel_data: [Option<(Vec<AnsContext>, Vec<u8>)>; 3] = [None, None, None];
 
-            layer
-                .iter()
-                .rev()
-                .for_each(|s| encoder.put_at(i, &symbol_map[&cdf_map[s]]));
+    let mut sorted_keys: Vec<Complex<i32>> = image.fractal_lattice.keys().cloned().collect();
+    sorted_keys.sort_by(order_complex);
 
-            ans_contexts.push(AnsContext { symbols, freqs });
+    for channel in 0..image.metadata.colorspace.num_channels() {
+        let ans_contexts = prepare_contexts(&image, channel);
+        let mut encoder: B64RansEncoderMulti<1> =
+            B64RansEncoderMulti::new(image.fractal_lattice.len() * 2 * (1 << middle.depth));
+
+        for key in sorted_keys.iter() {
+            let fractal = image.fractal_lattice.get(&key).unwrap();
+            let mut layers: Vec<&[Option<i32>]> = vec![];
+            let channel_coefficients = &fractal.coefficients[channel];
+
+            //layers.push(&channel_coefficients[1 << (depth - 1)..]);
+            //layers.push(&channel_coefficients[1 << (depth - 2)..1 << (depth - 1)]);
+            //layers.push(&channel_coefficients[..1 << (depth - 2)]);
+            layers.push(&channel_coefficients[..]);
+
+            for (i, sparse_layer) in layers.into_iter().enumerate() {
+                let unpacked_layer = sparse_layer
+                    .into_iter()
+                    .flatten()
+                    .map(|c| *c)
+                    .collect::<Vec<i32>>();
+
+                let current_context = &ans_contexts[0];
+                let max_freq_bits =
+                    utils::get_prev_power_two(current_context.freqs.iter().sum::<u32>() as usize)
+                        .trailing_zeros();
+
+                let symbol_map = current_context.freqs_to_enc_symbols(max_freq_bits);
+                let cdf = current_context.get_cdf();
+
+                let cdf_map = current_context
+                    .symbols
+                    .iter()
+                    .zip(cdf)
+                    .collect::<HashMap<&u32, u32>>();
+
+                let layer: Vec<u32> = unpacked_layer.into_iter().map(pack_signed).collect();
+                layer
+                    .iter()
+                    .rev()
+                    .for_each(|s| encoder.put_at(0, &symbol_map[&cdf_map[s]]));
+            }
         }
         encoder.flush_all();
         let data = encoder.data().to_owned();
@@ -124,47 +287,48 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
 pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, String> {
     let mut decoded = WaveletImage::from_metadata(compressed_image.metadata);
 
+    let mut sorted_keys: Vec<Complex<i32>> = decoded.fractal_lattice.keys().cloned().collect();
+    sorted_keys.sort_by(order_complex);
+
     let mut channel = 0;
     while let Some((ans_contexts, bytes)) = compressed_image.channel_data[channel].take() {
-        let mut layers: Vec<usize> = vec![];
-
-        let depth = decoded.depth;
-
-        layers.push(
-            decoded.coefficients[channel][..]
-                .iter()
-                .flatten()
-                .count(),
-        );
-
         let mut decoder: B64RansDecoderMulti<1> = B64RansDecoderMulti::new(bytes);
-        let mut last = 0;
-        for (i, (layer, ans_context)) in layers.into_iter().zip(ans_contexts.into_iter().rev()).enumerate() {
-            let mut cum_freqs = cum_sum(&ans_context.freqs);
-            let cum_freq_to_symbols = freqs_to_dec_symbols(&cum_freqs, &ans_context.freqs);
-            let symbol_map = cum_freqs
-                .clone()
-                .into_iter()
-                .zip(ans_context.symbols.clone())
-                .collect::<HashMap<u32, u32>>();
+        for key in sorted_keys.iter().rev() {
+            let fractal = decoded.fractal_lattice.get_mut(&key).unwrap();
 
-            cum_freqs.sort_unstable();
+            let mut layers: Vec<usize> = vec![];
+            layers.push(fractal.coefficients[channel][..].iter().flatten().count());
 
-            let max_freq_bits = utils::get_prev_power_two(layer)
-                    .trailing_zeros()
-                    + 1;
+            let mut last = 0;
+            for layer in layers.into_iter() {
+                let cum_freqs = ans_contexts[0].get_cdf();
+                let cum_freq_to_symbols = ans_contexts[0].freqs_to_dec_symbols();
+                let symbol_map = cum_freqs
+                    .clone()
+                    .into_iter()
+                    .zip(ans_contexts[0].symbols.clone())
+                    .collect::<HashMap<u32, u32>>();
 
-            for _l in 0..layer {
-                let cum_freq_decoded =
-                    find_nearest_or_equal(decoder.get_at(i, max_freq_bits), &cum_freqs);
-                let symbol = symbol_map[&cum_freq_decoded];
-                decoder.advance_step_at(i, &cum_freq_to_symbols[&cum_freq_decoded], max_freq_bits);
-                decoder.renorm_at(i);
-                last = insert_after_none_starting_from(
-                    unpack_signed(symbol),
-                    last,
-                    &mut decoded.coefficients[channel],
-                );
+                let max_freq_bits =
+                    utils::get_prev_power_two(ans_contexts[0].freqs.iter().sum::<u32>() as usize)
+                        .trailing_zeros();
+
+                for _l in 0..layer {
+                    let cum_freq_decoded =
+                        find_nearest_or_equal(decoder.get_at(0, max_freq_bits), &cum_freqs);
+                    let symbol = symbol_map[&cum_freq_decoded];
+                    decoder.advance_step_at(
+                        0,
+                        &cum_freq_to_symbols[&cum_freq_decoded],
+                        max_freq_bits,
+                    );
+                    decoder.renorm_at(0);
+                    last = insert_after_none_starting_from(
+                        unpack_signed(symbol),
+                        last,
+                        &mut fractal.coefficients[channel],
+                    );
+                }
             }
         }
         channel += 1;
@@ -172,111 +336,8 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
             break;
         }
     }
+
     return Ok(decoded);
-}
-
-fn insert_after_none_starting_from(element: i32, i: usize, vec: &mut Vec<Option<i32>>) -> usize {
-    let ind = (i..vec.len()).find(|j| vec[*j].is_some()).unwrap();
-    vec[ind] = Some(element);
-    ind + 1
-}
-
-#[derive(Debug)]
-pub struct AnsContext {
-    pub symbols: Vec<u32>,
-    pub freqs: Vec<u32>,
-}
-
-const ALPHABET_SIZE: usize = 512;
-
-fn get_freqs(coefs: &Vec<u32>) -> Vec<u32> {
-    let mut freqs = vec![0; ALPHABET_SIZE];
-    for coef in coefs {
-        freqs[*coef as usize] += 1;
-    }
-    return freqs;
-}
-
-#[must_use]
-fn cum_sum(sum: &[u32]) -> Vec<u32> {
-    sum.iter()
-        .scan(0_u32, |acc, x| {
-            let val = *acc;
-            *acc += x;
-            Some(val)
-        })
-        .collect::<Vec<u32>>()
-}
-
-fn normalize_freqs(freqs: &mut Vec<u32>, target_total: u32) -> Vec<u32> {
-    let mut cum_freqs = cum_sum(freqs);
-    let cur_total = *cum_freqs.last().unwrap() + freqs.last().unwrap();
-    for i in 1..cum_freqs.len() {
-        cum_freqs[i] = ((target_total as u64 * cum_freqs[i] as u64)/cur_total as u64) as u32; 
-    }
-
-    //NOTE:  Fixing nuked values -> commented out due to performance degradation
-    //for i in 0..cum_freqs.len() - 1 {
-    //    if freqs[i] != 0 && cum_freqs[i+1]  == cum_freqs[i] {
-    //        let mut best_freq: u32 = u32::MAX;
-    //        let mut best_steal: usize = usize::MAX;
-    //        for j in 0 .. cum_freqs.len() {
-    //            let freq = cum_freqs[j+1] - cum_freqs[j];
-    //            if freq > 1 && freq < best_freq {
-    //                best_freq = freq;
-    //                best_steal = j;
-    //            }
-    //        }
-    //
-    //        if best_steal < i {
-    //            for j in (best_steal+1)..=i {
-    //                cum_freqs[j] -= 1;
-    //            }
-    //        } else {
-    //            for j in (i+1)..= best_steal {
-    //                cum_freqs[j] += 1;
-    //            }
-    //        }
-    //
-    //    }
-    //}
-
-    for i in 0..(cum_freqs.len() - 1) {
-        freqs[i] = cum_freqs[i+1] - cum_freqs[i];
-    }
-
-    cum_freqs
-}
-
-// TODO: Implement Alias sampling method
-#[must_use]
-fn find_nearest_or_equal(cum_freq: u32, cum_freqs: &[u32]) -> u32 {
-    match cum_freqs.binary_search(&cum_freq) {
-        Ok(x) => cum_freqs[x],
-        Err(x) => cum_freqs[x - 1],
-    }
-}
-
-#[must_use]
-fn freqs_to_enc_symbols(
-    cum_freqs: &[u32],
-    freqs: &[u32],
-    depth: u32,
-) -> HashMap<u32, B64RansEncSymbol> {
-    cum_freqs
-        .iter()
-        .zip(freqs.iter())
-        .map(|(&cum_freq, &freq)| (cum_freq, B64RansEncSymbol::new(cum_freq, freq, depth)))
-        .collect()
-}
-
-#[must_use]
-fn freqs_to_dec_symbols(cum_freqs: &[u32], freqs: &[u32]) -> HashMap<u32, B64RansDecSymbol> {
-    cum_freqs
-        .iter()
-        .zip(freqs.iter())
-        .map(|(&cum_freqs, &freqs)| (cum_freqs, B64RansDecSymbol::new(cum_freqs, freqs)))
-        .collect()
 }
 
 #[cfg(test)]
@@ -286,35 +347,10 @@ mod test {
     // #[test]
     // fn cum_sum_test() {
     //     let x = [1, 2, 3, 4, 5];
-    //     let cum_x = cum_sum(&x);
+    //     let cum_x = get_cdf(&x);
     //     assert_eq!(cum_x, &[0, 1, 3, 6, 10])
     // }
 
     #[test]
-    fn logic_test() {
-        let layer = vec![1, 1, 1, 1, 1, 2, 3, 2, 3, 10, 11, 12];
-        let freqs = vec![0; 13];
-        let counter = layer.iter().counts();
-
-        let freqs = counter
-            .values()
-            .map(|e| u32::try_from(*e).unwrap())
-            .collect::<Vec<u32>>();
-
-        println!("{:?}", &freqs);
-        let symbols = counter.keys().map(|e| **e).collect::<Vec<i32>>();
-        println!("{:?}", &symbols);
-
-        let cum_freqs = cum_sum(&freqs);
-        println!("{:?}", &cum_freqs);
-
-        let symbol_map = freqs_to_enc_symbols(&cum_freqs, &freqs, 8);
-
-        let cdf_map = counter
-            .into_keys()
-            .zip(cum_freqs)
-            .collect::<HashMap<&i32, u32>>();
-
-        println!("{:?}", &cdf_map);
-    }
+    fn logic_test() {}
 }

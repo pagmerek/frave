@@ -4,7 +4,7 @@ use crate::stages::serialize::SerializeError;
 use crate::stages::wavelet_transform::WaveletImage;
 use num::complex::Complex;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ColorSpace {
     Luma,
     YCbCr,
@@ -38,7 +38,7 @@ impl ColorSpace {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FractalVariant {
     TameTwindragon,
     Twindragon,
@@ -64,6 +64,7 @@ impl FractalVariant {
     }
 }
 
+#[derive(Clone)]
 pub struct ImageMetadata {
     pub height: u32,
     pub width: u32,
@@ -71,6 +72,7 @@ pub struct ImageMetadata {
     pub variant: FractalVariant,
 }
 
+#[derive(Clone)]
 pub struct RasterImage {
     pub metadata: ImageMetadata,
     pub data: Vec<u8>,

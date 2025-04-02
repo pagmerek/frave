@@ -6,7 +6,7 @@ use std::fmt::Display;
 use std::mem;
 
 use crate::images::{ColorSpace, FractalVariant, CompressedImage, ImageMetadata};
-use crate::stages::entropy_coding::AnsContext;
+use crate::stages::entropy_coding::{AnsContext, ALPHABET_SIZE};
 
 #[derive(Debug)]
 pub enum SerializeError {
@@ -70,14 +70,14 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
         for ctx in ctxs {
             serial.extend_from_slice(Segments::EHD);
             serial.extend_from_slice(
-                &(ctx.symbols.len() * mem::size_of_val(&ctx.symbols[0])).to_le_bytes(),
+                &(ctx.freqs.len() * mem::size_of_val(&ctx.freqs[0])).to_le_bytes(),
             );
-            serial.extend_from_slice(
-                &ctx.symbols
-                    .iter()
-                    .flat_map(|s| s.to_le_bytes())
-                    .collect::<Vec<u8>>(),
-            );
+            //serial.extend_from_slice(
+            //    &ctx.symbols
+            //        .iter()
+            //        .flat_map(|s| s.to_le_bytes())
+            //        .collect::<Vec<u8>>(),
+            //);
             serial.extend_from_slice(
                 &ctx.freqs
                     .iter()
@@ -145,11 +145,11 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
                 let hist_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into()?) as usize;
                 offset += 8;
 
-                let symbols = bytes[offset..offset + hist_len]
-                    .chunks_exact(4)
-                    .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
-                    .collect();
-                offset += hist_len;
+                //let symbols = bytes[offset..offset + hist_len]
+                //    .chunks_exact(4)
+                //    .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
+                //    .collect();
+                //offset += hist_len;
 
                 let freqs: Vec<u32> = bytes[offset..offset + hist_len]
                     .chunks_exact(4)
@@ -158,7 +158,7 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
 
                 offset += hist_len;
 
-                ans_contexts.push(AnsContext { symbols, freqs: (*freqs.into_boxed_slice()).try_into().unwrap() })
+                ans_contexts.push(AnsContext { symbols: (0..ALPHABET_SIZE).map(|s| s as u32).collect(), freqs: (*freqs.into_boxed_slice()).try_into().unwrap() })
             }
             Segments::DAT => {
                 offset += 2;

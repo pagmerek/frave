@@ -1,6 +1,6 @@
 use crate::encoder::EncoderOpts;
 use crate::images::CompressedImage;
-use crate::stages::wavelet_transform::WaveletImage;
+use crate::stages::wavelet_transform::{Fractal, WaveletImage};
 use crate::utils;
 
 use itertools::Itertools;
@@ -28,7 +28,7 @@ fn emit_coefficients(layer: &Vec<i32>, center: Complex<i32>, layer_channel: usiz
     }
 }
 
-const ALPHABET_SIZE: usize = 512;
+pub const ALPHABET_SIZE: usize = 512;
 
 fn pack_signed(k: i32) -> u32 {
     if k >= 0 {
@@ -52,7 +52,7 @@ fn insert_after_none_starting_from(element: i32, i: usize, vec: &mut Vec<Option<
     ind + 1
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AnsContext {
     pub symbols: Vec<u32>,
     pub freqs: [u32; ALPHABET_SIZE],
@@ -100,11 +100,11 @@ impl AnsContext {
 
         //NOTE:  Fixing nuked values -> commented out due to performance degradation
         for i in 0..cum_freqs.len() - 1 {
-            if self.freqs[i] != 0 && cum_freqs[i+1]  == cum_freqs[i] {
+            if self.freqs[i] != 0 && cum_freqs[i + 1] == cum_freqs[i] {
                 let mut best_freq: u32 = u32::MAX;
                 let mut best_steal: usize = usize::MAX;
-                for j in 0 .. cum_freqs.len() - 1 {
-                    let freq = cum_freqs[j+1] - cum_freqs[j];
+                for j in 0..cum_freqs.len() - 1 {
+                    let freq = cum_freqs[j + 1] - cum_freqs[j];
                     if freq > 1 && freq < best_freq {
                         best_freq = freq;
                         best_steal = j;
@@ -112,15 +112,14 @@ impl AnsContext {
                 }
 
                 if best_steal < i {
-                    for j in (best_steal+1)..=i {
+                    for j in (best_steal + 1)..=i {
                         cum_freqs[j] -= 1;
                     }
                 } else {
-                    for j in (i+1)..= best_steal {
+                    for j in (i + 1)..=best_steal {
                         cum_freqs[j] += 1;
                     }
                 }
-
             }
         }
 
@@ -162,17 +161,56 @@ impl AnsContext {
 fn find_nearest_or_equal(cum_freq: u32, cum_freqs: &[u32]) -> u32 {
     match cum_freqs.binary_search(&cum_freq) {
         Ok(x) => cum_freqs[x],
-        Err(x) => cum_freqs[x-1],
+        Err(x) => cum_freqs[x - 1],
+    }
+}
+
+fn get_context_bucket(
+    fractal: &Fractal,
+    fractal_lattice: &HashMap<Complex<i32>, Fractal>,
+    channel: usize,
+) -> usize {
+    // |C - D| quantizied into buckets
+    // [0] = |C - D| <= 5
+    // [1] = |C - D| <= 20
+    // [2] = |C - D| <= 40
+    // [3] = |C - D| <= 60
+    // [4] = |C - D| > 60
+    let c = &fractal_lattice.get(&fractal.get_left());
+    let d = &fractal_lattice.get(&fractal.get_right());
+
+    let difference: u32 = match (*c, *d) {
+        (Some(left), Some(right)) => {
+            (left.coefficients[channel][0].unwrap() - right.coefficients[channel][0].unwrap()).abs()
+        }
+        (None, Some(right)) => (fractal.coefficients[channel][0].unwrap()
+            - right.coefficients[channel][0].unwrap())
+        .abs(),
+        (Some(left), None) => (left.coefficients[channel][0].unwrap()
+            - fractal.coefficients[channel][0].unwrap())
+        .abs(),
+        (None, None) => 0,
+    }
+    .try_into()
+    .unwrap();
+
+    match difference {
+        0..=10 => 0,
+        11..=20 => 1,
+        21..=30 => 2,
+        31..=60 => 3,
+        61.. => 4,
     }
 }
 
 fn prepare_contexts(image: &WaveletImage, channel: usize) -> Vec<AnsContext> {
-    let mut ans_contexts = vec![AnsContext::new()];
+    let mut ans_contexts = vec![AnsContext::new(); 5];
 
     for (_, fractal) in image.fractal_lattice.iter() {
         let mut layers: Vec<&[Option<i32>]> = vec![];
         let channel_coefficients = &fractal.coefficients[channel];
 
+        let bucket = get_context_bucket(fractal, &image.fractal_lattice, channel);
         layers.push(&channel_coefficients[..]);
 
         for sparse_layer in layers.into_iter() {
@@ -185,7 +223,7 @@ fn prepare_contexts(image: &WaveletImage, channel: usize) -> Vec<AnsContext> {
             let layer: Vec<u32> = unpacked_layer.into_iter().map(pack_signed).collect();
             let freqs = AnsContext::get_freqs(&layer);
 
-            ans_contexts[0].update_freqs(freqs);
+            ans_contexts[bucket].update_freqs(freqs);
         }
     }
 
@@ -193,6 +231,7 @@ fn prepare_contexts(image: &WaveletImage, channel: usize) -> Vec<AnsContext> {
         let max_freq_bits =
             utils::get_prev_power_two(ctx.freqs.iter().sum::<u32>() as usize).trailing_zeros();
         ctx.normalize_freqs(1 << max_freq_bits);
+
     }
 
     ans_contexts
@@ -233,7 +272,7 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
 
     for channel in 0..image.metadata.colorspace.num_channels() {
         let ans_contexts = prepare_contexts(&image, channel);
-        let mut encoder: B64RansEncoderMulti<1> =
+        let mut encoder: B64RansEncoderMulti<5> =
             B64RansEncoderMulti::new(image.fractal_lattice.len() * 2 * (1 << middle.depth));
 
         for key in sorted_keys.iter() {
@@ -241,6 +280,7 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
             let mut layers: Vec<&[Option<i32>]> = vec![];
             let channel_coefficients = &fractal.coefficients[channel];
 
+            let bucket = get_context_bucket(fractal, &image.fractal_lattice, channel);
             //layers.push(&channel_coefficients[1 << (depth - 1)..]);
             //layers.push(&channel_coefficients[1 << (depth - 2)..1 << (depth - 1)]);
             //layers.push(&channel_coefficients[..1 << (depth - 2)]);
@@ -253,7 +293,11 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
                     .map(|c| *c)
                     .collect::<Vec<i32>>();
 
-                let current_context = &ans_contexts[0];
+                if(encoder_opts.emit_coefficients) {
+                    emit_coefficients(&unpacked_layer, fractal.center, channel);
+                }
+
+                let current_context = &ans_contexts[bucket];
                 let max_freq_bits =
                     utils::get_prev_power_two(current_context.freqs.iter().sum::<u32>() as usize)
                         .trailing_zeros();
@@ -271,7 +315,7 @@ pub fn encode(image: WaveletImage, encoder_opts: &EncoderOpts) -> Result<Compres
                 layer
                     .iter()
                     .rev()
-                    .for_each(|s| encoder.put_at(0, &symbol_map[&cdf_map[s]]));
+                    .for_each(|s| encoder.put_at(bucket, &symbol_map[&cdf_map[s]]));
             }
         }
         encoder.flush_all();

@@ -1,4 +1,6 @@
-use std::ops;
+use std::{cmp::Ordering, ops};
+
+use num::Complex;
 
 pub const fn get_prev_power_two(x: usize) -> usize {
     let mut num = x;
@@ -9,4 +11,38 @@ pub const fn get_prev_power_two(x: usize) -> usize {
     num |= num >> 16;
 
     num ^ (num >> 1)
+}
+
+
+pub fn order_complex<T: std::cmp::PartialEq + std::cmp::PartialOrd>(
+    a: &Complex<T>,
+    b: &Complex<T>,
+) -> Ordering {
+    if a.re > b.re {
+        Ordering::Greater
+    } else if a.re < b.re {
+        Ordering::Less
+    } else if a.re == b.re && a.im > b.im {
+        Ordering::Greater
+    } else if a.re == b.re && a.im < b.im {
+        Ordering::Less
+    } else {
+        Ordering::Equal
+    }
+}
+
+pub fn pack_signed(k: i32) -> u32 {
+    if k >= 0 {
+        2 * k as u32
+    } else {
+        (-2 * k - 1) as u32
+    }
+}
+
+pub fn unpack_signed(k: u32) -> i32 {
+    if k % 2 == 0 {
+        (k / 2) as i32
+    } else {
+        (k + 1) as i32 / -2
+    }
 }

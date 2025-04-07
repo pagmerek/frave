@@ -1,13 +1,15 @@
 use crate::images::{FractalVariant, ColorSpace, CompressedImage, RasterImage, ImageMetadata};
+use crate::stages::entropy_coding::AnsContext;
 use crate::stages::wavelet_transform::WaveletImage;
-use crate::stages::{channel_transform, entropy_coding, quantization, serialize, wavelet_transform};
+use crate::stages::{channel_transform, entropy_coding, prediction, quantization, serialize, wavelet_transform};
 
 enum EncoderStage {
     RawImage(RasterImage),
     ChannelTransform(RasterImage),
     WaveletTransform(RasterImage),
     Quantization(WaveletImage),
-    EntropyEncoding(WaveletImage),
+    Prediction(WaveletImage),
+    EntropyEncoding(WaveletImage, [Vec<AnsContext>; 3]),
     EncodedImage(CompressedImage),
     SerializedImage(Vec<u8>),
     Failure(String),
@@ -26,10 +28,14 @@ impl EncoderStage {
                 Err(reason) => EncoderStage::Failure(reason),
             },
             EncoderStage::Quantization(data) => match quantization::encode(data) {
-                Ok(result) => EncoderStage::EntropyEncoding(result),
+                Ok(result) => EncoderStage::Prediction(result),
                 Err(reason) => EncoderStage::Failure(reason),
             },
-            EncoderStage::EntropyEncoding(data) => match entropy_coding::encode(data, encoder_options) {
+            EncoderStage::Prediction(mut data) => match prediction::encode(&mut data) {
+                Ok(result) => EncoderStage::EntropyEncoding(data, result),
+                Err(reason) => EncoderStage::Failure(reason),
+            },
+            EncoderStage::EntropyEncoding(data, contexts) => match entropy_coding::encode(data, contexts, encoder_options) {
                 Ok(result) => EncoderStage::EncodedImage(result),
                 Err(reason) => EncoderStage::Failure(reason),
             },

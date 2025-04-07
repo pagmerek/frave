@@ -27,16 +27,31 @@ pub struct Fractal {
     pub depth: u8,
     pub center: Complex<i32>,
     pub coefficients: [Vec<Option<i32>>; 3],
-    pub context: Option<usize>,
+    pub position_map: Vec<HashMap<Complex<i32>, usize>>,
+    pub image_positions: Vec<Complex<i32>>,
 }
 
 impl Fractal {
     fn new(depth: u8, center: Complex<i32>) -> Self {
+        let mut position_map = vec![HashMap::new(); depth as usize];
+        let mut image_positions = vec![Complex::<i32>::new(0, 0); 1 << (depth + 1)];
+        image_positions[1] = center;
+        for level in 0..depth {
+            for pos in 1 << level..1 << (level + 1) {
+                position_map[level as usize].insert(image_positions[pos], pos);
+
+                image_positions[2 * pos] = image_positions[pos];
+                image_positions[2 * pos + 1] =
+                    image_positions[pos] + LITERALS[(depth - level - 1) as usize];
+            }
+        }
+
         Fractal {
             depth,
             center,
             coefficients: [vec![], vec![], vec![]],
-            context: None,
+            position_map,
+            image_positions,
         }
     }
 
@@ -54,49 +69,121 @@ impl Fractal {
         ];
     }
 
-    fn get_neighbour_locations(&self) -> [Complex<i32>; 6] {
+    pub fn get_neighbour_locations(&self) -> [Complex<i32>; 6] {
         let vectors = Self::get_nearby_vectors(self.depth);
         return vectors.map(|x| self.center + x).try_into().unwrap();
     }
 
-    pub fn get_left(&self) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(self.depth);
+    pub fn get_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let mut vectors = Self::get_nearby_vectors(depth);
         vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        self.center + vectors[3]
+        center + vectors.into_iter().min_by(|a,b| a.re.cmp(&b.re)).unwrap()
     }
 
-    pub fn get_right(&self) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(self.depth);
+    pub fn get_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let mut vectors = Self::get_nearby_vectors(depth);
         vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        self.center + vectors[0]
+        center + vectors.into_iter().max_by(|a,b| a.re.cmp(&b.re)).unwrap()
     }
 
-    pub fn get_up_right(&self) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(self.depth);
+    pub fn get_up_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let mut vectors = Self::get_nearby_vectors(depth);
         vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        self.center + vectors[5]
-
-    }
-
-    pub fn get_up_left(&self) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(self.depth);
-        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        self.center + vectors[4]
+        center + vectors[5]
 
     }
 
-    pub fn get_down_left(&self) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(self.depth);
+    pub fn get_up_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let mut vectors = Self::get_nearby_vectors(depth);
         vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        self.center + vectors[2]
+        center + vectors[4]
 
     }
 
-    pub fn get_down_right(&self) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(self.depth);
+    pub fn get_down_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let mut vectors = Self::get_nearby_vectors(depth);
         vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        self.center + vectors[1]
+        center + vectors[2]
 
+    }
+
+    pub fn get_down_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let mut vectors = Self::get_nearby_vectors(depth);
+        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
+        center + vectors[1]
+
+    }
+
+    fn extract_coefficients(
+        &mut self,
+        raster_image: &RasterImage,
+        depth: u8,
+    ) {
+        let mut coefficients = [
+            vec![None; 1 << depth + 1],
+            vec![None; 1 << depth + 1],
+            vec![None; 1 << depth + 1],
+        ];
+
+        for channel in 0..raster_image.metadata.colorspace.num_channels() {
+            let mut low_pass_values = vec![None; 1 << depth];
+            for level in (0..depth).rev() {
+                // compute high-pass and low-pass components
+                for pos in 1 << level..1 << (level + 1) {
+                    let (left_coef, right_coef): (Option<i32>, Option<i32>);
+                    if level == depth - 1 {
+                        left_coef = raster_image.get_pixel(
+                            self.image_positions[2 * pos].re,
+                            self.image_positions[2 * pos].im,
+                            channel,
+                        );
+                        right_coef = raster_image.get_pixel(
+                            self.image_positions[2 * pos + 1].re,
+                            self.image_positions[2 * pos + 1].im,
+                            channel,
+                        );
+                    } else {
+                        left_coef = low_pass_values[2 * pos];
+                        right_coef = low_pass_values[2 * pos + 1];
+                    }
+                    coefficients[channel][pos] =
+                        try_apply(left_coef, right_coef, |l, r| (l - r), 0);
+                    low_pass_values[pos] = try_apply(
+                        right_coef,
+                        coefficients[channel][pos],
+                        |l, r| (l + r / 2), 0
+                    );
+                }
+                // compute local slope
+                //for pos in 1 << level..1 << (level + 1) {
+                //    if coefficients[channel][pos].is_some() {
+                //        let (left_coef, right_coef): (Option<i32>, Option<i32>);
+                //        let left_ind = (1<<level..pos).rev().find(|e| low_pass_values[*e].is_some());
+                //        let right_ind = (pos..1<<(level+1)).find(|e| low_pass_values[*e].is_some());
+                //
+                //        if let Some(ind) = left_ind {
+                //            left_coef = low_pass_values[ind];
+                //        } else {
+                //            left_coef = low_pass_values[pos];
+                //        }
+                //
+                //        if let Some(ind) = right_ind {
+                //            right_coef = low_pass_values[ind];
+                //        } else {
+                //            right_coef = low_pass_values[pos];
+                //        }
+                //
+                //        let slope = try_apply(left_coef, right_coef, |l, r| (l - r) >> 2, 0);
+                //
+                //        // update
+                //        coefficients[channel][pos] =
+                //            try_apply(coefficients[channel][pos], slope, |l, r| l - r, 0)
+                //    }
+                //}
+            }
+            coefficients[channel][0] = low_pass_values[1];
+        }
+        self.coefficients = coefficients;
     }
 
 }
@@ -123,39 +210,31 @@ impl RasterImage {
         };
 
         for (center, fractal) in wavelet_image.fractal_lattice.iter() {
-            raster.extract_values(&fractal.coefficients, fractal.center, fractal.depth);
+            raster.extract_values(&fractal);
         }
+        raster.set_pixel(7, 97, 255, 0);
+        raster.set_pixel(7, 97, 0, 1);
+        raster.set_pixel(7, 97, 0, 2);
 
         return raster;
     }
 
     fn extract_values(
         &mut self,
-        wavelet_coefs: &[Vec<Option<i32>>; 3],
-        center: Complex<i32>,
-        depth: u8,
+        fractal: &Fractal
     ) {
-        let mut image_positions = vec![Complex::<i32>::new(0, 0); 1 << (depth + 1)];
-        image_positions[1] = center;
-        for level in 0..depth {
-            for pos in 1 << level..1 << (level + 1) {
-                image_positions[2 * pos] = image_positions[pos];
-                image_positions[2 * pos + 1] =
-                    image_positions[pos] + LITERALS[(depth - level - 1) as usize];
-            }
-        }
         for channel in 0..self.metadata.colorspace.num_channels() {
-            let mut low_pass_values = vec![0; 1 << depth];
-            low_pass_values[1] = wavelet_coefs[channel][0].unwrap();
+            let mut low_pass_values = vec![0; 1 << fractal.depth];
+            low_pass_values[1] = fractal.coefficients[channel][0].unwrap();
 
-            for level in 0..depth {
+            for level in 0..fractal.depth {
                 for pos in 1 << level..1 << (level + 1) {
-                    if let Some(dif) = wavelet_coefs[channel][pos] {
+                    if let Some(dif) = fractal.coefficients[channel][pos] {
                         let right_subtree: i32 = low_pass_values[pos] - dif / 2;
                         let left_subtree: i32 = dif + right_subtree;
-                        if level == depth - 1 {
-                            let left_pixel = image_positions[2 * pos];
-                            let right_pixel = image_positions[2 * pos + 1];
+                        if level == fractal.depth - 1 {
+                            let left_pixel = fractal.image_positions[2 * pos];
+                            let right_pixel = fractal.image_positions[2 * pos + 1];
                             self.set_pixel(left_pixel.re, left_pixel.im, left_subtree, channel);
                             self.set_pixel(right_pixel.re, right_pixel.im, right_subtree, channel);
                         } else {
@@ -193,12 +272,10 @@ impl WaveletImage {
         //    calculate_depth_center(raster_image.metadata.width, raster_image.metadata.height);
 
         let mut fractal_lattice =
-            Self::fractal_divide(raster_image.metadata.width, raster_image.metadata.height, 11);
-        dbg!(fractal_lattice.len());
+            Self::fractal_divide(raster_image.metadata.width, raster_image.metadata.height, 9);
 
         for (_, fractal) in fractal_lattice.iter_mut() {
-            fractal.coefficients =
-                Self::extract_coefficients(&raster_image, fractal.center, fractal.depth);
+            fractal.extract_coefficients(&raster_image, fractal.depth);
         }
         fractal_lattice.retain(|_, frac| frac.coefficients.iter().all(|channel| channel[0].is_some()));
 
@@ -244,87 +321,6 @@ impl WaveletImage {
         fractal_lattice
     }
 
-    fn extract_coefficients(
-        raster_image: &RasterImage,
-        center: Complex<i32>,
-        depth: u8,
-    ) -> [Vec<Option<i32>>; 3] {
-        let mut coefficients = [
-            vec![None; 1 << depth + 1],
-            vec![None; 1 << depth + 1],
-            vec![None; 1 << depth + 1],
-        ];
-        let mut image_positions = vec![Complex::<i32>::new(0, 0); 1 << (depth + 1)];
-        image_positions[1] = center;
-        for level in 0..depth {
-            for pos in 1 << level..1 << (level + 1) {
-                image_positions[2 * pos] = image_positions[pos];
-                image_positions[2 * pos + 1] =
-                    image_positions[pos] + LITERALS[(depth - level - 1) as usize];
-            }
-        }
-
-        for channel in 0..raster_image.metadata.colorspace.num_channels() {
-            let mut low_pass_values = vec![None; 1 << depth];
-            for level in (0..depth).rev() {
-                // compute high-pass and low-pass components
-                for pos in 1 << level..1 << (level + 1) {
-                    let (left_coef, right_coef): (Option<i32>, Option<i32>);
-                    if level == depth - 1 {
-                        left_coef = raster_image.get_pixel(
-                            image_positions[2 * pos].re,
-                            image_positions[2 * pos].im,
-                            channel,
-                        );
-                        right_coef = raster_image.get_pixel(
-                            image_positions[2 * pos + 1].re,
-                            image_positions[2 * pos + 1].im,
-                            channel,
-                        );
-                    } else {
-                        left_coef = low_pass_values[2 * pos];
-                        right_coef = low_pass_values[2 * pos + 1];
-                    }
-                    coefficients[channel][pos] =
-                        try_apply(left_coef, right_coef, |l, r| (l - r), 0);
-                    low_pass_values[pos] = try_apply(
-                        right_coef,
-                        coefficients[channel][pos],
-                        |l, r| (l + r / 2),
-                        0,
-                    );
-                }
-                // compute local slope
-                //for pos in 1 << level..1 << (level + 1) {
-                //    if coefficients[channel][pos].is_some() {
-                //        let (left_coef, right_coef): (Option<i32>, Option<i32>);
-                //        let left_ind = (1<<level..pos).rev().find(|e| low_pass_values[*e].is_some());
-                //        let right_ind = (pos..1<<(level+1)).find(|e| low_pass_values[*e].is_some());
-                //
-                //        if let Some(ind) = left_ind {
-                //            left_coef = low_pass_values[ind];
-                //        } else {
-                //            left_coef = low_pass_values[pos];
-                //        }
-                //
-                //        if let Some(ind) = right_ind {
-                //            right_coef = low_pass_values[ind];
-                //        } else {
-                //            right_coef = low_pass_values[pos];
-                //        }
-                //
-                //        let slope = try_apply(left_coef, right_coef, |l, r| (l - r) >> 2, 0);
-                //
-                //        // update
-                //        coefficients[channel][pos] =
-                //            try_apply(coefficients[channel][pos], slope, |l, r| l - r, 0)
-                //    }
-                //}
-            }
-            coefficients[channel][0] = low_pass_values[1];
-        }
-        coefficients
-    }
 }
 
 pub fn encode(

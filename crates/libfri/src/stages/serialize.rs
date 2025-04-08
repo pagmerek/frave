@@ -145,12 +145,6 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
                 let hist_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into()?) as usize;
                 offset += 8;
 
-                //let symbols = bytes[offset..offset + hist_len]
-                //    .chunks_exact(4)
-                //    .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
-                //    .collect();
-                //offset += hist_len;
-
                 let freqs: Vec<u32> = bytes[offset..offset + hist_len]
                     .chunks_exact(4)
                     .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
@@ -158,7 +152,10 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
 
                 offset += hist_len;
 
-                ans_contexts.push(AnsContext { symbols: (0..ALPHABET_SIZE).map(|s| s as u32).collect(), freqs: (*freqs.into_boxed_slice()).try_into().unwrap() })
+                let mut context = AnsContext::new();
+                context.freqs = (*freqs.into_boxed_slice()).try_into().unwrap();
+                context.finalize_context(false);
+                ans_contexts.push(context)
             }
             Segments::DAT => {
                 offset += 2;

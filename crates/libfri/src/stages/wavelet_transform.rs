@@ -35,6 +35,7 @@ impl Fractal {
     fn new(depth: u8, center: Complex<i32>) -> Self {
         let mut position_map = vec![HashMap::new(); depth as usize];
         let mut image_positions = vec![Complex::<i32>::new(0, 0); 1 << (depth + 1)];
+        image_positions[0] = center;
         image_positions[1] = center;
         for level in 0..depth {
             for pos in 1 << level..1 << (level + 1) {

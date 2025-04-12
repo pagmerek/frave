@@ -18,13 +18,13 @@ pub fn order_complex<T: std::cmp::PartialEq + std::cmp::PartialOrd>(
     a: &Complex<T>,
     b: &Complex<T>,
 ) -> Ordering {
-    if a.re > b.re {
+    if a.im > b.im {
         Ordering::Greater
-    } else if a.re < b.re {
+    } else if a.im < b.im {
         Ordering::Less
-    } else if a.re == b.re && a.im > b.im {
+    } else if a.im == b.im && a.re > b.re {
         Ordering::Greater
-    } else if a.re == b.re && a.im < b.im {
+    } else if a.im == b.im && a.re < b.re {
         Ordering::Less
     } else {
         Ordering::Equal

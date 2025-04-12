@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::encoder::EncoderOpts;
 use crate::fractal::{CENTERS, LITERALS};
 use crate::images::{ImageMetadata, RasterImage};
+use crate::utils;
 
 use num::complex::ComplexFloat;
 use num::{Complex, Float};
@@ -27,6 +28,7 @@ pub struct Fractal {
     pub depth: u8,
     pub center: Complex<i32>,
     pub coefficients: [Vec<Option<i32>>; 3],
+    pub buckets: [Vec<u32>; 3],
     pub position_map: Vec<HashMap<Complex<i32>, usize>>,
     pub image_positions: Vec<Complex<i32>>,
 }
@@ -51,6 +53,7 @@ impl Fractal {
             depth,
             center,
             coefficients: [vec![], vec![], vec![]],
+            buckets: [vec![0; 1<< depth], vec![0; 1<< depth], vec![0; 1<< depth]],
             position_map,
             image_positions,
         }
@@ -70,48 +73,60 @@ impl Fractal {
         ];
     }
 
+    fn get_sorted_neighbours(depth: u8) -> [Complex<i32>; 6] {
+        let mut vectors = Self::get_nearby_vectors(depth);
+        let rightmost = vectors.iter().max_by_key(|r| r.re).unwrap().clone();
+        let rightmost_angle = (rightmost.im as f32).atan2(rightmost.re as f32);
+
+        vectors.sort_by(|a, b| {
+            let mut angle1 = (a.im as f32).atan2(a.re as f32) - rightmost_angle;
+            if angle1 < 0. {
+                angle1 += 2.*std::f32::consts::PI;
+            }
+
+            let mut angle2 = (b.im as f32).atan2(b.re as f32) - rightmost_angle;
+            if angle2 < 0. {
+                angle2 += 2.*std::f32::consts::PI;
+            }
+            angle1.total_cmp(&angle2)
+        });
+        vectors
+
+    }
+
     pub fn get_neighbour_locations(&self) -> [Complex<i32>; 6] {
         let vectors = Self::get_nearby_vectors(self.depth);
         return vectors.map(|x| self.center + x).try_into().unwrap();
     }
 
     pub fn get_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(depth);
-        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        center + vectors.into_iter().min_by(|a,b| a.re.cmp(&b.re)).unwrap()
+        let vectors = Self::get_sorted_neighbours(depth);
+        center + vectors[3]
     }
 
     pub fn get_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(depth);
-        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        center + vectors.into_iter().max_by(|a,b| a.re.cmp(&b.re)).unwrap()
-    }
-
-    pub fn get_up_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(depth);
-        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        center + vectors[5]
-
-    }
-
-    pub fn get_up_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(depth);
-        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
-        center + vectors[4]
-
+        let vectors = Self::get_sorted_neighbours(depth);
+        center + vectors[0]
     }
 
     pub fn get_down_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(depth);
-        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
+        let vectors = Self::get_sorted_neighbours(depth);
         center + vectors[2]
-
     }
 
     pub fn get_down_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let mut vectors = Self::get_nearby_vectors(depth);
-        vectors.sort_by(|a, b| (a.im as f32).atan2(a.re as f32).total_cmp(&(b.im as f32).atan2(b.re as f32)));
+        let vectors = Self::get_sorted_neighbours(depth);
         center + vectors[1]
+    }
+
+    pub fn get_up_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let vectors = Self::get_sorted_neighbours(depth);
+        center + vectors[5]
+    }
+
+    pub fn get_up_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
+        let vectors = Self::get_sorted_neighbours(depth);
+        center + vectors[4]
 
     }
 
@@ -155,32 +170,6 @@ impl Fractal {
                         |l, r| (l + r / 2), 0
                     );
                 }
-                // compute local slope
-                //for pos in 1 << level..1 << (level + 1) {
-                //    if coefficients[channel][pos].is_some() {
-                //        let (left_coef, right_coef): (Option<i32>, Option<i32>);
-                //        let left_ind = (1<<level..pos).rev().find(|e| low_pass_values[*e].is_some());
-                //        let right_ind = (pos..1<<(level+1)).find(|e| low_pass_values[*e].is_some());
-                //
-                //        if let Some(ind) = left_ind {
-                //            left_coef = low_pass_values[ind];
-                //        } else {
-                //            left_coef = low_pass_values[pos];
-                //        }
-                //
-                //        if let Some(ind) = right_ind {
-                //            right_coef = low_pass_values[ind];
-                //        } else {
-                //            right_coef = low_pass_values[pos];
-                //        }
-                //
-                //        let slope = try_apply(left_coef, right_coef, |l, r| (l - r) >> 2, 0);
-                //
-                //        // update
-                //        coefficients[channel][pos] =
-                //            try_apply(coefficients[channel][pos], slope, |l, r| l - r, 0)
-                //    }
-                //}
             }
             coefficients[channel][0] = low_pass_values[1];
         }
@@ -198,8 +187,32 @@ fn calculate_depth_center(img_w: u32, img_h: u32) -> (u8, Complex<i32>) {
     return (depth, center);
 }
 
+fn color_pixel(raster: &mut RasterImage, key: &Complex<i32>, color: i32){
+            raster.set_pixel(key.re, key.im, color, 0);
+            raster.set_pixel(key.re, key.im, 0, 1);
+            raster.set_pixel(key.re, key.im, 0, 2);
+
+            raster.set_pixel(key.re+1, key.im, color, 0);
+            raster.set_pixel(key.re+1, key.im, 0, 1);
+            raster.set_pixel(key.re+1, key.im, 0, 2);
+
+            raster.set_pixel(key.re-1, key.im, color, 0);
+            raster.set_pixel(key.re-1, key.im, 0, 1);
+            raster.set_pixel(key.re-1, key.im, 0, 2);
+
+            raster.set_pixel(key.re, key.im+1, color, 0);
+            raster.set_pixel(key.re, key.im+1, 0, 1);
+            raster.set_pixel(key.re, key.im+1, 0, 2);
+
+            raster.set_pixel(key.re, key.im-1, color, 0);
+            raster.set_pixel(key.re, key.im-1, 0, 1);
+            raster.set_pixel(key.re, key.im-1, 0, 2);
+}
+
 impl RasterImage {
     pub fn from_wavelet(wavelet_image: WaveletImage) -> RasterImage {
+        let sorted_keys: Vec<Complex<i32>> = wavelet_image.get_sorted_lattice();
+
         let mut raster = RasterImage {
             data: vec![
                 0;
@@ -210,13 +223,32 @@ impl RasterImage {
             metadata: wavelet_image.metadata,
         };
 
-        for (center, fractal) in wavelet_image.fractal_lattice.iter() {
+        for (_center, fractal) in wavelet_image.fractal_lattice.iter() {
             raster.extract_values(&fractal);
         }
-        raster.set_pixel(7, 97, 255, 0);
-        raster.set_pixel(7, 97, 0, 1);
-        raster.set_pixel(7, 97, 0, 2);
 
+        if false {
+            for (i, key) in sorted_keys.iter().enumerate() {
+                if i == sorted_keys.len()/2 {
+                    let mut depth = wavelet_image.fractal_lattice[&key].depth;
+                    depth -= 1;
+                    color_pixel(&mut raster, key, 128);
+
+                    let neighbours = vec![
+                        Fractal::get_left(*key, depth),
+                        Fractal::get_up_left(*key,depth),
+                        Fractal::get_up_right(*key, depth),
+                        Fractal::get_down_right(*key, depth),
+                        Fractal::get_down_left(*key, depth),
+                        //Fractal::get_right(*key, depth),
+                    ];
+
+                    neighbours.into_iter().for_each(|n| color_pixel(&mut raster, &n, 255))
+                    
+                }
+            }
+
+        }
         return raster;
     }
 
@@ -269,9 +301,6 @@ impl WaveletImage {
     }
 
     pub fn from_raster(raster_image: RasterImage) -> WaveletImage {
-        //let (depth, center) =
-        //    calculate_depth_center(raster_image.metadata.width, raster_image.metadata.height);
-
         let mut fractal_lattice =
             Self::fractal_divide(raster_image.metadata.width, raster_image.metadata.height, 9);
 
@@ -320,6 +349,34 @@ impl WaveletImage {
         }
 
         fractal_lattice
+    }
+
+    pub fn get_sorted_lattice(&self) -> Vec<Complex<i32>> {
+        let mut keys: Vec<Complex<i32>> = self.fractal_lattice.keys().cloned().collect();
+        let depth = self.fractal_lattice[&keys[0]].depth;
+
+        let mut sorted_fractalwise: Vec<Complex<i32>> = Vec::new();
+
+        let mut first = keys.iter().min_by_key(|a| a.re + a.im).unwrap().clone();
+
+        loop {
+            let mut scan = first;
+            loop {
+                if self.fractal_lattice.get(&scan).is_some() {
+                    sorted_fractalwise.push(scan);
+                }
+                if scan.re > self.metadata.width as i32 {
+                    break;
+                }
+                scan = Fractal::get_right(scan, depth);
+            }
+
+            if sorted_fractalwise.len() == keys.len() {
+                break;
+            }
+            first = Fractal::get_down_left(first, depth);
+        }
+        sorted_fractalwise
     }
 
 }

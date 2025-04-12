@@ -1,3 +1,4 @@
+use std::cmp::{min, max};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -7,6 +8,8 @@ use num::Complex;
 use crate::stages::entropy_coding::AnsContext;
 use crate::stages::wavelet_transform::{Fractal, WaveletImage};
 use crate::{fractal, utils};
+
+pub const CONTEXT_AMOUNT: usize = 8;
 
 fn emit_coefficients(data: &[u32], ctx_id: usize, ctx_channel: usize) {
     std::fs::create_dir_all("./coefficients").unwrap();
@@ -56,16 +59,16 @@ pub fn get_lf_context_bucket(
         .iter()
         .map(|pos| {
             if fractal.position_map[level].get(pos).is_none() {
-                if let Some(position) = get_containing_fractal(pos, level, fractal, fractal_lattice)
+                if let Some(nposition) = get_containing_fractal(pos, level, fractal, fractal_lattice)
                 {
-                    let left_fractal = &fractal_lattice[&position];
-                    let l = left_fractal.position_map[level][pos];
-                    left_fractal.coefficients[channel][l].unwrap_or(0)
+                    let containing_fractal = &fractal_lattice[&nposition];
+                    containing_fractal.coefficients[channel][position].unwrap_or(0)
                 } else {
-                    fractal.coefficients[channel][position].unwrap_or(0)
+                    0
                 }
             } else {
-                0
+                let loc = fractal.position_map[level][pos];
+                fractal.coefficients[channel][loc].unwrap_or(0)
             }
         })
         .collect();
@@ -73,12 +76,25 @@ pub fn get_lf_context_bucket(
     let difference: u32 = (values[0] - values[2]).abs() as u32;
 
     let bucket = match difference {
-        0 => 0,
-        1..=10 => 1,
-        11.. => 2,
-    };
+        0..3 => 0,
+        3..6 => 1,
+        6..10 => 2,
+        10..20 => 3,
+        20..40 => 4,
+        40..60 => 5,
+        60..90 => 6,
+        90.. => 7,
+     };
 
-    let prediction = 0;//values[0] as f32 * 0.5 + values[2] as f32 * 0.5;
+
+    let prediction = if values[1] >= max(values[0], values[2]) {
+        max(values[0], values[2]) 
+    } else if values[1] <= min(values[0], values[2]) {
+        min(values[0], values[2])
+    } else {
+        values[0] + values[2] - values[1]
+    };
+    //let prediction = 0;
 
     (bucket, prediction as i32)
 }
@@ -90,50 +106,74 @@ pub fn get_hf_context_bucket(
     fractal_lattice: &HashMap<Complex<i32>, Fractal>,
     channel: usize,
 ) -> (usize, i32) {
-    //let position_in_image = fractal.image_positions[position];
+    assert!(current_depth > 0);
+    let parent_level = current_depth as usize - 1;
 
     let fractal = &fractal_lattice[parent_fractal_pos];
+    let position_in_image = fractal.image_positions[position];
     let parent_position_in_image = fractal.image_positions[position / 2];
     let neighbours = vec![
-        Fractal::get_left(parent_position_in_image, fractal.depth - (current_depth + 1)),
-        Fractal::get_up_left(parent_position_in_image, fractal.depth - (current_depth + 1)),
-        Fractal::get_up_right(parent_position_in_image, fractal.depth - (current_depth + 1)),
-        Fractal::get_right(parent_position_in_image, fractal.depth - (current_depth + 1)),
-        Fractal::get_down_left(parent_position_in_image, fractal.depth - (current_depth + 1)),
-        Fractal::get_down_right(parent_position_in_image, fractal.depth - (current_depth + 1))
+        Fractal::get_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_up_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_up_right(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_right(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_down_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_down_right(parent_position_in_image, fractal.depth - parent_level as u8)
     ];
-    let level: usize = current_depth as usize;
 
     let values: Vec<i32> = neighbours
         .iter()
         .map(|pos| {
-            if fractal.position_map[level].get(pos).is_none() {
-                if let Some(position) =
-                    get_containing_fractal(pos, level, &fractal, fractal_lattice)
+            if fractal.position_map[parent_level].get(pos).is_none() {
+                if let Some(nposition) =
+                    get_containing_fractal(pos, parent_level, &fractal, fractal_lattice)
                 {
-                    let left_fractal = &fractal_lattice[&position];
-                    let l = left_fractal.position_map[level][pos];
-                    left_fractal.coefficients[channel][l].unwrap_or(0)
+                    let containing_fractal = &fractal_lattice[&nposition];
+                    let loc = containing_fractal.position_map[parent_level][pos];
+                    containing_fractal.coefficients[channel][loc].unwrap_or(0)
                 } else {
-                    fractal.coefficients[channel][0].unwrap_or(0)
+                    0
                 }
             } else {
-                0
+                let loc = fractal.position_map[parent_level][pos];
+                fractal.coefficients[channel][loc].unwrap_or(0)
             }
         })
         .collect();
 
-    let difference: u32 = (values[0] - values[2]).abs() as u32;
+    let difference: u32 = (values[0] - values[3]).abs() as u32;
+    let difference_horiz1: u32 = (values[1] - values[4]).abs() as u32;
+    let difference_horiz2: u32 = (values[2] - values[5]).abs() as u32;
 
     let bucket = match difference {
-        0 => 0,
-        1..=90 => 1,
-        91.. => 2,
-    };
+        0..3 => 0,
+        3..6 => 1,
+        6..10 => 2,
+        10..20 => 3,
+        20..40 => 4,
+        40..60 => 5,
+        60..90 => 6,
+        90.. => 7,
+     };
 
-    let prediction = 0;//values[0] as f32 * 0.5 + values[3] as f32 * 0.5;
+    // avg
+    //let prediction = (values[0] as f32 + values[1] as f32 + values[2] as f32+ values[3] as f32 + values[4] as f32 + values[5] as f32)/6.0;
+    
+    //LOCO-I
+    //let prediction = if values[1] >= max(values[0], values[2]) {
+    //    max(values[0], values[2]) 
+    //} else if values[1] <= min(values[0], values[2]) {
+    //    min(values[0], values[2])
+    //} else {
+    //    values[0] + values[2] - values[1]
+    //};
+    
+    // Optimized from paper
+    let prediction = 0.57*(values[0] as f32) + 0.48*(values[2] as f32) - 0.2*(values[1] as f32) + 0.15*(values[4] as f32);
+     
+    //let prediction = 0;
 
-    (bucket, prediction as i32)
+    (bucket as usize, prediction as i32)
 }
 
 fn get_entropy(histogram: &[u32], total_size: usize) -> f32 {
@@ -150,10 +190,8 @@ fn get_entropy(histogram: &[u32], total_size: usize) -> f32 {
 pub fn encode(wavelet_image: &mut WaveletImage) -> Result<[Vec<AnsContext>; 3], String> {
     let mut contexts: [Vec<AnsContext>; 3] = [vec![], vec![], vec![]];
     for channel in 0..wavelet_image.metadata.colorspace.num_channels() {
-        contexts[channel] = vec![AnsContext::new(); 3];
-        let mut sorted_keys: Vec<Complex<i32>> =
-            wavelet_image.fractal_lattice.keys().cloned().collect();
-        sorted_keys.sort_by(utils::order_complex);
+        contexts[channel] = vec![AnsContext::new(); CONTEXT_AMOUNT];
+        let sorted_keys: Vec<Complex<i32>> = wavelet_image.get_sorted_lattice();
 
         for key in sorted_keys.iter() {
             let fractal = &wavelet_image.fractal_lattice[key];
@@ -204,10 +242,10 @@ pub fn encode(wavelet_image: &mut WaveletImage) -> Result<[Vec<AnsContext>; 3], 
 
         for (i, ctx) in contexts[channel].iter_mut().enumerate() {
             ctx.finalize_context(true);
-            dbg!(ctx.freqs.iter().sum::<u32>() as usize, channel);
             println!(
-                "CHANNEL: {}, entropy: {}",
+                "CHANNEL: {}, size: {}, entropy: {}",
                 channel,
+                ctx.freqs.iter().sum::<u32>() as usize,
                 get_entropy(&ctx.freqs, ctx.freqs.iter().sum::<u32>() as usize)
             );
 

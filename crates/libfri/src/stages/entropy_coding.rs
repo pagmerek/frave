@@ -5,8 +5,10 @@ use crate::stages::wavelet_transform::{Fractal, WaveletImage};
 use crate::{fractal, utils};
 
 use core::f32;
+use std::usize;
 use num::Complex;
 use std::collections::HashMap;
+use std::fmt::write;
 use std::fs::File;
 use std::io::Write;
 
@@ -16,7 +18,7 @@ use rans::RansDecoderMulti;
 use rans::RansEncoderMulti;
 use rans::{RansDecSymbol, RansEncSymbol};
 
-use super::prediction::get_hf_context_bucket;
+use crate::stages::prediction::CONTEXT_AMOUNT;
 
 pub const ALPHABET_SIZE: usize = 1024;
 
@@ -63,7 +65,8 @@ impl AnsContext {
                 Some(val)
             })
             .collect::<Vec<u32>>()
-            .try_into().unwrap()
+            .try_into()
+            .unwrap()
     }
 
     fn update_freqs(&mut self, new_freqs: [u32; ALPHABET_SIZE]) {
@@ -84,7 +87,8 @@ impl AnsContext {
         } else {
             self.cdf = self.get_cdf();
         }
-        self.max_freq_bits = utils::get_prev_power_two(self.freqs.iter().sum::<u32>() as usize).trailing_zeros();
+        self.max_freq_bits =
+            utils::get_prev_power_two(self.freqs.iter().sum::<u32>() as usize).trailing_zeros();
         self.freqs_to_enc_symbols = self.get_freqs_to_enc_symbols();
         self.freqs_to_dec_symbols = self.get_freqs_to_dec_symbols();
     }
@@ -107,6 +111,9 @@ impl AnsContext {
                         best_freq = freq;
                         best_steal = j;
                     }
+                }
+                if best_steal == usize::MAX {
+                    continue;
                 }
 
                 if best_steal < i {
@@ -154,7 +161,7 @@ fn find_nearest_or_equal(cum_freq: u32, cum_freqs: &[u32]) -> u32 {
     }
 }
 
-pub fn encode_symbol<const T: usize>(
+pub fn encode_symbol(
     value: i32,
     position: usize,
     depth: u8,
@@ -162,8 +169,7 @@ pub fn encode_symbol<const T: usize>(
     channel: usize,
     ans_contexts: &Vec<AnsContext>,
     fractal_lattice: &HashMap<Complex<i32>, Fractal>,
-    encoder: &mut B64RansEncoderMulti<T>,
-) {
+) -> (B64RansEncSymbol, usize) {
     let (bucket, prediction) = if position == 0 || position == 1 {
         prediction::get_lf_context_bucket(position, 0, parent_pos, &fractal_lattice, channel)
     } else {
@@ -171,12 +177,12 @@ pub fn encode_symbol<const T: usize>(
     };
     let current_context = &ans_contexts[bucket];
     let symbol_map = &current_context.freqs_to_enc_symbols;
-    encoder.put_at(
-        bucket,
-        &symbol_map[utils::pack_signed(value - prediction) as usize],
-    );
-}
 
+    (
+        symbol_map[utils::pack_signed(value - prediction) as usize].clone(),
+        bucket,
+    )
+}
 
 fn decode_symbol<const T: usize>(
     position: usize,
@@ -193,18 +199,33 @@ fn decode_symbol<const T: usize>(
         prediction::get_hf_context_bucket(position, depth, parent_pos, &fractal_lattice, channel)
     };
 
+    let decoder_pos = CONTEXT_AMOUNT - bucket - 1;
     let current_context = &ans_contexts[bucket];
     let cum_freq_to_symbols = &current_context.freqs_to_dec_symbols;
 
-    let cum_freq_decoded = find_nearest_or_equal(decoder.get_at(bucket, current_context.max_freq_bits), &current_context.cdf);
-    let symbol = current_context.cdf.iter().position(|&r| r == cum_freq_decoded).unwrap() as u32;
+    let decoded_cdf = decoder.get_at(decoder_pos, current_context.max_freq_bits);
+    let cum_freq_decoded = find_nearest_or_equal(
+        decoded_cdf,
+        &current_context.cdf,
+    );
+
+    let mut symbol = current_context
+        .cdf
+        .iter()
+        .position(|&r| r == cum_freq_decoded)
+        .unwrap() as u32;
+
+    while current_context.cdf[symbol as usize] == cum_freq_decoded {
+        symbol += 1;
+    }
+    symbol -= 1;
+
     decoder.advance_step_at(
-        bucket,
+        decoder_pos,
         &cum_freq_to_symbols[&cum_freq_decoded],
         current_context.max_freq_bits,
     );
-    decoder.renorm_at(bucket);
-
+    decoder.renorm_at(decoder_pos);
     return utils::unpack_signed(symbol) + prediction;
 }
 
@@ -215,37 +236,58 @@ pub fn encode(
 ) -> Result<CompressedImage, String> {
     let mut channel_data: [Option<(Vec<AnsContext>, Vec<u8>)>; 3] = [None, None, None];
 
-    let mut sorted_keys: Vec<Complex<i32>> = image.fractal_lattice.keys().cloned().collect();
-    sorted_keys.sort_by(utils::order_complex);
+    //dbg!(&contexts[0][0].freqs_to_enc_symbols);
+    let sorted_keys: Vec<Complex<i32>> = image.get_sorted_lattice();
 
     let global_depth = image.fractal_lattice[&sorted_keys[0]].depth;
     for channel in 0..image.metadata.colorspace.num_channels() {
-        let mut encoder: B64RansEncoderMulti<3> =
+        let mut encoder: B64RansEncoderMulti<CONTEXT_AMOUNT> =
             B64RansEncoderMulti::new(image.fractal_lattice.len() * 2 * (1 << global_depth));
+
+        let mut enc_symbols = Vec::<(B64RansEncSymbol, usize)>::new();
+        enc_symbols.reserve(1 << global_depth);
 
         // First scan -> Low frequency coefficients
         for key in sorted_keys.iter() {
             let fractal = &image.fractal_lattice[&key];
             if let Some(value) = fractal.coefficients[channel][0] {
-                encode_symbol(value, 0, global_depth, key, channel, &contexts[channel], &image.fractal_lattice, &mut encoder);
+                let symbol = encode_symbol(
+                    value,
+                    0,
+                    0,
+                    key,
+                    channel,
+                    &contexts[channel],
+                    &image.fractal_lattice,
+                );
+                enc_symbols.push(symbol);
             }
         }
 
         // Second scan -> High frequency coefficient root
         for key in sorted_keys.iter() {
             let fractal = &image.fractal_lattice[&key];
-            if let Some(value) = fractal.coefficients[channel][0] {
-                encode_symbol(value, 1, global_depth, key, channel, &contexts[channel], &image.fractal_lattice, &mut encoder);
+            if let Some(value) = fractal.coefficients[channel][1] {
+                let symbol = encode_symbol(
+                    value,
+                    1,
+                    0,
+                    key,
+                    channel,
+                    &contexts[channel],
+                    &image.fractal_lattice,
+                );
+                enc_symbols.push(symbol);
             }
         }
 
         // Remaining levels
-        for level in 1..image.fractal_lattice[&sorted_keys[0]].depth {
+        for level in 1..global_depth {
             for key in sorted_keys.iter() {
                 let fractal = &image.fractal_lattice[&key];
                 for pos in 1 << level..1 << (level + 1) {
                     if let Some(value) = fractal.coefficients[channel][pos] {
-                        encode_symbol(
+                        let symbol = encode_symbol(
                             value,
                             pos,
                             level,
@@ -253,13 +295,17 @@ pub fn encode(
                             channel,
                             &contexts[channel],
                             &image.fractal_lattice,
-                            &mut encoder,
                         );
+                        enc_symbols.push(symbol);
                     }
                 }
             }
         }
 
+        let len1 = enc_symbols.len();
+        for (symbol, bucket) in enc_symbols.into_iter().rev() {
+            encoder.put_at(bucket, &symbol);
+        }
         encoder.flush_all();
         let data = encoder.data().to_owned();
         let bpp = data.len() as f32 / (image.metadata.width * image.metadata.height) as f32 * 8.;
@@ -275,29 +321,47 @@ pub fn encode(
 pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, String> {
     let mut decoded = WaveletImage::from_metadata(compressed_image.metadata);
 
-    let mut sorted_keys: Vec<Complex<i32>> = decoded.fractal_lattice.keys().cloned().collect();
-    sorted_keys.sort_by(utils::order_complex);
+    let sorted_keys: Vec<Complex<i32>> = decoded.get_sorted_lattice();
     let mut channel = 0;
     let global_depth = decoded.fractal_lattice[&sorted_keys[0]].depth;
     while let Some((ans_contexts, bytes)) = compressed_image.channel_data[channel].take() {
-        let mut decoder: B64RansDecoderMulti<3> = B64RansDecoderMulti::new(bytes);
+        if channel == 0 {
+            //dbg!(&ans_contexts[0].freqs_to_enc_symbols);
+        }
+        let mut decoder: B64RansDecoderMulti<CONTEXT_AMOUNT> = B64RansDecoderMulti::new(bytes);
         // First scan -> Low frequency coefficients
         for key in sorted_keys.iter() {
-            let symbol = decode_symbol(0, global_depth, key, channel, &ans_contexts, &decoded.fractal_lattice, &mut decoder);
+            let symbol = decode_symbol(
+                0,
+                0,
+                key,
+                channel,
+                &ans_contexts,
+                &decoded.fractal_lattice,
+                &mut decoder,
+            );
             let fractal = decoded.fractal_lattice.get_mut(&key).unwrap();
             fractal.coefficients[channel][0] = Some(symbol);
         }
 
         // Second scan -> High frequency coefficient root
         for key in sorted_keys.iter() {
-            let symbol = decode_symbol(1, global_depth, key, channel, &ans_contexts, &decoded.fractal_lattice, &mut decoder);
+            let symbol = decode_symbol(
+                1,
+                0,
+                key,
+                channel,
+                &ans_contexts,
+                &decoded.fractal_lattice,
+                &mut decoder,
+            );
             let fractal = decoded.fractal_lattice.get_mut(&key).unwrap();
             fractal.coefficients[channel][1] = Some(symbol);
         }
 
         // Remaining levels
         for level in 1..global_depth {
-            for key in sorted_keys.iter().rev() {
+            for key in sorted_keys.iter() {
                 for pos in 1 << level..1 << (level + 1) {
                     if decoded.fractal_lattice[key].coefficients[channel][pos].is_none() {
                         continue;

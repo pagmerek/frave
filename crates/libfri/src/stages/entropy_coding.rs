@@ -5,12 +5,12 @@ use crate::stages::wavelet_transform::{Fractal, WaveletImage};
 use crate::{fractal, utils};
 
 use core::f32;
-use std::usize;
 use num::Complex;
 use std::collections::HashMap;
 use std::fmt::write;
 use std::fs::File;
 use std::io::Write;
+use std::usize;
 
 use rans::b64_decoder::{B64RansDecSymbol, B64RansDecoderMulti};
 use rans::b64_encoder::{B64RansEncSymbol, B64RansEncoderMulti};
@@ -169,11 +169,19 @@ pub fn encode_symbol(
     channel: usize,
     ans_contexts: &Vec<AnsContext>,
     fractal_lattice: &HashMap<Complex<i32>, Fractal>,
+    value_prediction_params: &[f32; 6],
 ) -> (B64RansEncSymbol, usize) {
     let (bucket, prediction) = if position == 0 || position == 1 {
         prediction::get_lf_context_bucket(position, 0, parent_pos, &fractal_lattice, channel)
     } else {
-        prediction::get_hf_context_bucket(position, depth, parent_pos, &fractal_lattice, channel)
+        prediction::get_hf_context_bucket(
+            position,
+            depth,
+            parent_pos,
+            &fractal_lattice,
+            &value_prediction_params,
+            channel,
+        )
     };
     let current_context = &ans_contexts[bucket];
     let symbol_map = &current_context.freqs_to_enc_symbols;
@@ -191,12 +199,20 @@ fn decode_symbol<const T: usize>(
     channel: usize,
     ans_contexts: &Vec<AnsContext>,
     fractal_lattice: &HashMap<Complex<i32>, Fractal>,
+    value_prediction_params: &[f32; 6],
     decoder: &mut B64RansDecoderMulti<T>,
 ) -> i32 {
     let (bucket, prediction) = if position == 0 || position == 1 {
         prediction::get_lf_context_bucket(position, 0, parent_pos, &fractal_lattice, channel)
     } else {
-        prediction::get_hf_context_bucket(position, depth, parent_pos, &fractal_lattice, channel)
+        prediction::get_hf_context_bucket(
+            position,
+            depth,
+            parent_pos,
+            &fractal_lattice,
+            value_prediction_params,
+            channel,
+        )
     };
 
     let decoder_pos = CONTEXT_AMOUNT - bucket - 1;
@@ -204,10 +220,7 @@ fn decode_symbol<const T: usize>(
     let cum_freq_to_symbols = &current_context.freqs_to_dec_symbols;
 
     let decoded_cdf = decoder.get_at(decoder_pos, current_context.max_freq_bits);
-    let cum_freq_decoded = find_nearest_or_equal(
-        decoded_cdf,
-        &current_context.cdf,
-    );
+    let cum_freq_decoded = find_nearest_or_equal(decoded_cdf, &current_context.cdf);
 
     let mut symbol = current_context
         .cdf
@@ -234,7 +247,7 @@ pub fn encode(
     contexts: [Vec<AnsContext>; 3],
     encoder_opts: &EncoderOpts,
 ) -> Result<CompressedImage, String> {
-    let mut channel_data: [Option<(Vec<AnsContext>, Vec<u8>)>; 3] = [None, None, None];
+    let mut channel_data: [Option<(Vec<AnsContext>, Vec<u8>, [f32; 6])>; 3] = [None, None, None];
 
     //dbg!(&contexts[0][0].freqs_to_enc_symbols);
     let sorted_keys: Vec<Complex<i32>> = image.get_sorted_lattice();
@@ -259,6 +272,7 @@ pub fn encode(
                     channel,
                     &contexts[channel],
                     &image.fractal_lattice,
+                    &encoder_opts.value_prediction_params[channel],
                 );
                 enc_symbols.push(symbol);
             }
@@ -276,6 +290,7 @@ pub fn encode(
                     channel,
                     &contexts[channel],
                     &image.fractal_lattice,
+                    &encoder_opts.value_prediction_params[channel],
                 );
                 enc_symbols.push(symbol);
             }
@@ -295,6 +310,7 @@ pub fn encode(
                             channel,
                             &contexts[channel],
                             &image.fractal_lattice,
+                            &encoder_opts.value_prediction_params[channel],
                         );
                         enc_symbols.push(symbol);
                     }
@@ -309,8 +325,10 @@ pub fn encode(
         encoder.flush_all();
         let data = encoder.data().to_owned();
         let bpp = data.len() as f32 / (image.metadata.width * image.metadata.height) as f32 * 8.;
-        println!("bits per pixel: {}", bpp);
-        channel_data[channel] = Some((contexts[channel].clone(), data));
+        if encoder_opts.verbose {
+            println!("bits per pixel: {}", bpp);
+        }
+        channel_data[channel] = Some((contexts[channel].clone(), data, encoder_opts.value_prediction_params[channel].clone()));
     }
     Ok(CompressedImage {
         metadata: image.metadata,
@@ -324,7 +342,7 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
     let sorted_keys: Vec<Complex<i32>> = decoded.get_sorted_lattice();
     let mut channel = 0;
     let global_depth = decoded.fractal_lattice[&sorted_keys[0]].depth;
-    while let Some((ans_contexts, bytes)) = compressed_image.channel_data[channel].take() {
+    while let Some((ans_contexts, bytes, value_prediction_params)) = compressed_image.channel_data[channel].take() {
         if channel == 0 {
             //dbg!(&ans_contexts[0].freqs_to_enc_symbols);
         }
@@ -338,6 +356,7 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
                 channel,
                 &ans_contexts,
                 &decoded.fractal_lattice,
+                &value_prediction_params,
                 &mut decoder,
             );
             let fractal = decoded.fractal_lattice.get_mut(&key).unwrap();
@@ -353,6 +372,7 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
                 channel,
                 &ans_contexts,
                 &decoded.fractal_lattice,
+                &value_prediction_params,
                 &mut decoder,
             );
             let fractal = decoded.fractal_lattice.get_mut(&key).unwrap();
@@ -373,6 +393,7 @@ pub fn decode(mut compressed_image: CompressedImage) -> Result<WaveletImage, Str
                         channel,
                         &ans_contexts,
                         &decoded.fractal_lattice,
+                        &value_prediction_params,
                         &mut decoder,
                     );
 

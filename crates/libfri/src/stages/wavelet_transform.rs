@@ -2,10 +2,11 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::encoder::EncoderOpts;
-use crate::fractal::{CENTERS, LITERALS};
+use crate::fractal::{self, CENTERS, LITERALS};
 use crate::images::{ImageMetadata, RasterImage};
 use crate::utils;
 
+use itertools::Position;
 use num::complex::ComplexFloat;
 use num::{Complex, Float};
 
@@ -28,6 +29,7 @@ pub struct Fractal {
     pub depth: u8,
     pub center: Complex<i32>,
     pub coefficients: [Vec<Option<i32>>; 3],
+    pub values: [Vec<Option<i32>>; 3],
     pub buckets: [Vec<u32>; 3],
     pub position_map: Vec<HashMap<Complex<i32>, usize>>,
     pub image_positions: Vec<Complex<i32>>,
@@ -42,7 +44,6 @@ impl Fractal {
         for level in 0..depth {
             for pos in 1 << level..1 << (level + 1) {
                 position_map[level as usize].insert(image_positions[pos], pos);
-
                 image_positions[2 * pos] = image_positions[pos];
                 image_positions[2 * pos + 1] =
                     image_positions[pos] + LITERALS[(depth - level - 1) as usize];
@@ -53,24 +54,36 @@ impl Fractal {
             depth,
             center,
             coefficients: [vec![], vec![], vec![]],
-            buckets: [vec![0; 1<< depth], vec![0; 1<< depth], vec![0; 1<< depth]],
+            buckets: [
+                vec![0; 1 << depth],
+                vec![0; 1 << depth],
+                vec![0; 1 << depth],
+            ],
             position_map,
             image_positions,
+            values: [vec![], vec![], vec![]],
         }
     }
 
-    fn get_nearby_vectors(depth: u8) -> [Complex<i32>;6] {
-        let zl = LITERALS[depth as usize];
-        let zmd = LITERALS[depth as usize + 1] + zl;
+    fn get_nearby_vectors(depth: u8) -> [Complex<i32>; 6] {
+        if depth == 0 {
+            let zl = Complex::new(-1, 1);
+            let zmd = Complex::new(-1,-1);
+            return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
+        } else if depth == 1 {
+            let zl = Complex::new(2, 0);
+            let zmd = Complex::new(2,-2);
+            return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
+        } else if depth == 2 {
+            let zl = Complex::new(-3, -1);
+            let zmd = Complex::new(2,-2);
+            return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
+        } else {
+            let zl = LITERALS[depth as usize];
+            let zmd = LITERALS[depth as usize + 1] + zl;
 
-        return [
-            zl,
-            zl - zmd,
-            - zmd,
-            - zl,
-            zmd - zl,
-            zmd,
-        ];
+            return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
+        }
     }
 
     fn get_sorted_neighbours(depth: u8) -> [Complex<i32>; 6] {
@@ -81,17 +94,16 @@ impl Fractal {
         vectors.sort_by(|a, b| {
             let mut angle1 = (a.im as f32).atan2(a.re as f32) - rightmost_angle;
             if angle1 < 0. {
-                angle1 += 2.*std::f32::consts::PI;
+                angle1 += 2. * std::f32::consts::PI;
             }
 
             let mut angle2 = (b.im as f32).atan2(b.re as f32) - rightmost_angle;
             if angle2 < 0. {
-                angle2 += 2.*std::f32::consts::PI;
+                angle2 += 2. * std::f32::consts::PI;
             }
             angle1.total_cmp(&angle2)
         });
         vectors
-
     }
 
     pub fn get_neighbour_locations(&self) -> [Complex<i32>; 6] {
@@ -127,22 +139,22 @@ impl Fractal {
     pub fn get_up_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
         let vectors = Self::get_sorted_neighbours(depth);
         center + vectors[4]
-
     }
 
-    fn extract_coefficients(
-        &mut self,
-        raster_image: &RasterImage,
-        depth: u8,
-    ) {
+    fn extract_coefficients(&mut self, raster_image: &RasterImage, depth: u8) {
         let mut coefficients = [
-            vec![None; 1 << depth + 1],
-            vec![None; 1 << depth + 1],
-            vec![None; 1 << depth + 1],
+            vec![None; 1 << depth],
+            vec![None; 1 << depth],
+            vec![None; 1 << depth],
         ];
 
+        let mut low_pass_values = [
+            vec![None; 1 << depth],
+            vec![None; 1 << depth],
+            vec![None; 1 << depth],
+        ];
+;
         for channel in 0..raster_image.metadata.colorspace.num_channels() {
-            let mut low_pass_values = vec![None; 1 << depth];
             for level in (0..depth).rev() {
                 // compute high-pass and low-pass components
                 for pos in 1 << level..1 << (level + 1) {
@@ -159,23 +171,24 @@ impl Fractal {
                             channel,
                         );
                     } else {
-                        left_coef = low_pass_values[2 * pos];
-                        right_coef = low_pass_values[2 * pos + 1];
+                        left_coef = low_pass_values[channel][2 * pos];
+                        right_coef = low_pass_values[channel][2 * pos + 1];
                     }
                     coefficients[channel][pos] =
                         try_apply(left_coef, right_coef, |l, r| (l - r), 0);
-                    low_pass_values[pos] = try_apply(
+                    low_pass_values[channel][pos] = try_apply(
                         right_coef,
                         coefficients[channel][pos],
-                        |l, r| (l + r / 2), 0
+                        |l, r| (l + r / 2),
+                        0,
                     );
                 }
             }
-            coefficients[channel][0] = low_pass_values[1];
+            coefficients[channel][0] = low_pass_values[channel][1];
         }
+        self.values = low_pass_values;
         self.coefficients = coefficients;
     }
-
 }
 
 fn calculate_depth_center(img_w: u32, img_h: u32) -> (u8, Complex<i32>) {
@@ -187,28 +200,77 @@ fn calculate_depth_center(img_w: u32, img_h: u32) -> (u8, Complex<i32>) {
     return (depth, center);
 }
 
-fn color_pixel(raster: &mut RasterImage, key: &Complex<i32>, color: i32){
-            raster.set_pixel(key.re, key.im, color, 0);
-            raster.set_pixel(key.re, key.im, 0, 1);
-            raster.set_pixel(key.re, key.im, 0, 2);
-
-            raster.set_pixel(key.re+1, key.im, color, 0);
-            raster.set_pixel(key.re+1, key.im, 0, 1);
-            raster.set_pixel(key.re+1, key.im, 0, 2);
-
-            raster.set_pixel(key.re-1, key.im, color, 0);
-            raster.set_pixel(key.re-1, key.im, 0, 1);
-            raster.set_pixel(key.re-1, key.im, 0, 2);
-
-            raster.set_pixel(key.re, key.im+1, color, 0);
-            raster.set_pixel(key.re, key.im+1, 0, 1);
-            raster.set_pixel(key.re, key.im+1, 0, 2);
-
-            raster.set_pixel(key.re, key.im-1, color, 0);
-            raster.set_pixel(key.re, key.im-1, 0, 1);
-            raster.set_pixel(key.re, key.im-1, 0, 2);
+fn color_pixel(raster: &mut RasterImage, key: &Complex<i32>, color: i32, channel: usize) {
+    raster.set_pixel(key.re, key.im, color, channel);
+    //raster.set_pixel(key.re+1, key.im, color, 0);
+    //raster.set_pixel(key.re-1, key.im, color, 0);
+    //raster.set_pixel(key.re, key.im+1, color, 0);
+    //raster.set_pixel(key.re, key.im-1, color, 0);
 }
 
+fn get_containing_fractal(
+    pos: &Complex<i32>,
+    level: usize,
+    fractal: &Fractal,
+    fractal_lattice: &HashMap<Complex<i32>, Fractal>,
+) -> Option<Complex<i32>> {
+    for location in fractal.get_neighbour_locations() {
+        if let Some(neighbour) = fractal_lattice.get(&location) {
+            if neighbour.position_map[level].contains_key(&pos) {
+                return Some(location);
+            }
+        }
+    }
+    None
+}
+
+fn get_hf_context_bucket(
+    raster: &mut RasterImage,
+    position: usize,
+    current_depth: u8,
+    parent_fractal_pos: &Complex<i32>,
+    fractal_lattice: &HashMap<Complex<i32>, Fractal>,
+    value_prediction_params: &[f32; 6],
+    channel: usize,
+) {
+    assert!(current_depth > 0);
+    let parent_level = current_depth as usize - 1;
+
+    let fractal = &fractal_lattice[parent_fractal_pos];
+    let position_in_image = fractal.image_positions[position];
+    let parent_position_in_image = fractal.image_positions[position / 2];
+    let neighbours = vec![
+        Fractal::get_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_up_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_up_right(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_right(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_down_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        Fractal::get_down_right(parent_position_in_image, fractal.depth - parent_level as u8),
+    ];
+
+    let values: Vec<i32> = neighbours
+        .iter()
+        .map(|pos| {
+            color_pixel(raster, pos, 255, 0);
+            if fractal.position_map[parent_level].get(pos).is_none() {
+                if let Some(nposition) =
+                    get_containing_fractal(pos, parent_level, &fractal, fractal_lattice)
+                {
+                    let containing_fractal = &fractal_lattice[&nposition];
+                    let loc = containing_fractal.position_map[parent_level][pos];
+                    0
+                } else {
+                    println!("out of bounds {} {}", pos, parent_level);
+                    //dbg!(&fractal.position_map[parent_level]);
+                    0
+                }
+            } else {
+                let loc = fractal.position_map[parent_level+1][pos];
+                fractal.coefficients[channel][loc].unwrap_or(0)
+            }
+        })
+        .collect();
+}
 impl RasterImage {
     pub fn from_wavelet(wavelet_image: WaveletImage) -> RasterImage {
         let sorted_keys: Vec<Complex<i32>> = wavelet_image.get_sorted_lattice();
@@ -228,34 +290,43 @@ impl RasterImage {
         }
 
         if false {
-            for (i, key) in sorted_keys.iter().enumerate() {
-                if i == sorted_keys.len()/2 {
-                    let mut depth = wavelet_image.fractal_lattice[&key].depth;
-                    depth -= 1;
-                    color_pixel(&mut raster, key, 128);
+            let center = Complex::<i32>::new(
+                raster.metadata.width as i32 / 2,
+                raster.metadata.height as i32 / 2,
+            );
+            let fractal = &wavelet_image.fractal_lattice[&center];
+            let depth = fractal.depth;
 
-                    let neighbours = vec![
-                        Fractal::get_left(*key, depth),
-                        Fractal::get_up_left(*key,depth),
-                        Fractal::get_up_right(*key, depth),
-                        Fractal::get_down_right(*key, depth),
-                        Fractal::get_down_left(*key, depth),
-                        //Fractal::get_right(*key, depth),
-                    ];
-
-                    neighbours.into_iter().for_each(|n| color_pixel(&mut raster, &n, 255))
-                    
+            for level in 2..depth {
+                for pos in 1 << level..1 << (level + 1) {
+                        get_hf_context_bucket(
+                            &mut raster,
+                            pos,
+                            level,
+                            &center,
+                            &wavelet_image.fractal_lattice,
+                            &[1., 1., 1., 1., 1., 1.],
+                            0,
+                        );
                 }
             }
+            let find = Complex::new(220, 129);
+            for (center, fractal) in wavelet_image.fractal_lattice.iter() {
+                for (i, dep) in fractal.position_map.iter().enumerate() {
+                    if(dep.contains_key(&find)) {
+                        println!("found! {} {}", i, center);
+                    }
+                    
 
+                }
+                color_pixel(&mut raster, center, 255, 2);
+            }
         }
+
         return raster;
     }
 
-    fn extract_values(
-        &mut self,
-        fractal: &Fractal
-    ) {
+    fn extract_values(&mut self, fractal: &Fractal) {
         for channel in 0..self.metadata.colorspace.num_channels() {
             let mut low_pass_values = vec![0; 1 << fractal.depth];
             low_pass_values[1] = fractal.coefficients[channel][0].unwrap();
@@ -307,7 +378,8 @@ impl WaveletImage {
         for (_, fractal) in fractal_lattice.iter_mut() {
             fractal.extract_coefficients(&raster_image, fractal.depth);
         }
-        fractal_lattice.retain(|_, frac| frac.coefficients.iter().all(|channel| channel[0].is_some()));
+        fractal_lattice
+            .retain(|_, frac| frac.coefficients.iter().all(|channel| channel[0].is_some()));
 
         WaveletImage {
             metadata: raster_image.metadata,
@@ -378,7 +450,6 @@ impl WaveletImage {
         }
         sorted_fractalwise
     }
-
 }
 
 pub fn encode(

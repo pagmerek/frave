@@ -1,7 +1,7 @@
 pub mod commands;
 
 use clap::Parser;
-use commands::{bench, decode, encode};
+use commands::{bench, decode, encode, optimize};
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -31,6 +31,7 @@ pub enum Commands {
     Decode(decode::DecodeCommand),
     Encode(encode::EncodeCommand),
     Bench(bench::BenchCommand),
+    Optimize(optimize::OptimizeCommand),
 }
 
 
@@ -40,5 +41,6 @@ fn main() {
         Commands::Encode(cmd) => encode::encode_image(cmd, cli.global_options.verbose),
         Commands::Decode(cmd) => decode::decode_image(cmd),
         Commands::Bench(cmd) => bench::benchmark(cmd),
+        Commands::Optimize(cmd) => optimize::optimize(cmd),
     }
 }

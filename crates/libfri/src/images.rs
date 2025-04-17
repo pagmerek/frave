@@ -72,6 +72,12 @@ pub struct ImageMetadata {
     pub variant: FractalVariant,
 }
 
+impl ImageMetadata {
+    pub fn new(height: u32, width: u32) -> Self {
+        ImageMetadata { height, width, colorspace: ColorSpace::RGB, variant: FractalVariant::TameTwindragon }
+    }
+}
+
 #[derive(Clone)]
 pub struct RasterImage {
     pub metadata: ImageMetadata,
@@ -107,5 +113,5 @@ impl RasterImage {
 
 pub struct CompressedImage {
     pub metadata: ImageMetadata,
-    pub channel_data: [Option<(Vec<AnsContext>, Vec<u8>)>; 3],
+    pub channel_data: [Option<(Vec<AnsContext>, Vec<u8>, [f32;6])>; 3],
 }

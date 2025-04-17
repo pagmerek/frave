@@ -41,6 +41,7 @@ mod Segments {
     pub const EHD: &[u8] = &[0xFF, 0xB2]; // Entropy Header Data
     pub const DAT: &[u8] = &[0xFF, 0xB4]; // Data
     pub const EOC: &[u8] = &[0xFF, 0xB8]; // End Of Channel
+    pub const PRD: &[u8] = &[0xFF, 0xBB]; // Prediction params
     pub const EOI: &[u8] = &[0xFF, 0xDF]; // End Of Image
 }
 
@@ -65,19 +66,22 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
     serial.extend_from_slice(&mdat.to_le_bytes());
 
     let mut i = 0;
-    while let Some((ctxs, encoded_bytes)) = &image.channel_data[i].take() {
+    while let Some((ctxs, encoded_bytes, value_prediction_params)) = &image.channel_data[i].take() {
         i += 1;
+
+        serial.extend_from_slice(Segments::PRD);
+        serial.extend_from_slice(
+            &value_prediction_params
+                .iter()
+                .flat_map(|s| s.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        );
+
         for ctx in ctxs {
             serial.extend_from_slice(Segments::EHD);
             serial.extend_from_slice(
                 &(ctx.freqs.len() * mem::size_of_val(&ctx.freqs[0])).to_le_bytes(),
             );
-            //serial.extend_from_slice(
-            //    &ctx.symbols
-            //        .iter()
-            //        .flat_map(|s| s.to_le_bytes())
-            //        .collect::<Vec<u8>>(),
-            //);
             serial.extend_from_slice(
                 &ctx.freqs
                     .iter()
@@ -98,7 +102,7 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
     return Ok(serial);
 }
 
-type ChannelData = [Option<(Vec<AnsContext>, Vec<u8>)>; 3];
+type ChannelData = [Option<(Vec<AnsContext>, Vec<u8>, [f32;6])>; 3];
 
 pub fn decode(bytes: Vec<u8>) -> Result<CompressedImage, SerializeError> {
     let mut offset = 0;
@@ -136,9 +140,20 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
     let mut channel_data: ChannelData = [None, None, None];
     let mut ans_contexts: Vec<AnsContext> = vec![];
     let mut encoded_bytes: Vec<u8> = vec![];
+    let mut value_prediction_params: [f32;6] = [0.;6];
     let mut i = 0;
     loop {
         match &bytes[offset..offset + 2] {
+            Segments::PRD => {
+                offset += 2;
+
+                value_prediction_params = bytes[offset..offset + 6*4]
+                    .chunks_exact(4)
+                    .map(|e| f32::from_le_bytes(e.try_into().unwrap()))
+                    .collect::<Vec<_>>()
+                    .try_into().unwrap();
+                offset += 6*4;
+            }
             Segments::EHD => {
                 offset += 2;
 
@@ -172,7 +187,7 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
             Segments::EOC => {
                 offset += 2;
 
-                channel_data[i] = Some((ans_contexts, encoded_bytes));
+                channel_data[i] = Some((ans_contexts, encoded_bytes, value_prediction_params));
                 ans_contexts = vec![];
                 encoded_bytes = vec![];
                 i += 1;

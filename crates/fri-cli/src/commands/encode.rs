@@ -23,6 +23,7 @@ pub fn encode_image(cmd: EncodeCommand, verbose: bool) {
     let luma_img = img;
     let encoder = FRIEncoder::new(EncoderOpts {
         emit_coefficients: cmd.emit_coefficients,
+        verbose: true,
         ..Default::default() 
     });
 

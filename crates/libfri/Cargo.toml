@@ -8,3 +8,5 @@ authors = [ "Pawel pgmerek@proton.me"]
 rans = "0.2.1"
 num = "0.4.3"
 itertools = "0.14.0"
+nalgebra = "0.33.0"
+lstsq = "0.6.0"

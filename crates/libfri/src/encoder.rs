@@ -16,7 +16,7 @@ enum EncoderStage {
 }
 
 impl EncoderStage {
-    fn forward(self, encoder_options: &EncoderOpts) -> EncoderStage {
+    fn forward(self, encoder_options: &mut EncoderOpts) -> EncoderStage {
         match self {
             EncoderStage::RawImage(data) => EncoderStage::ChannelTransform(data),
             EncoderStage::ChannelTransform(data) => match channel_transform::encode(data) {
@@ -31,7 +31,7 @@ impl EncoderStage {
                 Ok(result) => EncoderStage::Prediction(result),
                 Err(reason) => EncoderStage::Failure(reason),
             },
-            EncoderStage::Prediction(mut data) => match prediction::encode(&mut data) {
+            EncoderStage::Prediction(mut data) => match prediction::encode(&mut data, encoder_options) {
                 Ok(result) => EncoderStage::EntropyEncoding(data, result),
                 Err(reason) => EncoderStage::Failure(reason),
             },
@@ -58,6 +58,8 @@ pub enum EncoderQuality {
 pub struct EncoderOpts {
    pub quality: EncoderQuality,
    pub emit_coefficients: bool,
+   pub value_prediction_params: [[f32; 6]; 3],
+   pub verbose: bool,
 }
 
 pub struct FRIEncoder {
@@ -69,6 +71,8 @@ impl Default for EncoderOpts {
         Self {
             emit_coefficients: false,
             quality: EncoderQuality::Lossless,
+            value_prediction_params: [[-0.5, -0.5, 0.5, 0.5, 0.5, 0.5]; 3],
+            verbose: false,
         }
     }
 }
@@ -79,7 +83,7 @@ impl FRIEncoder {
     }
 
     pub fn encode(
-        self,
+        mut self,
         data: Vec<u8>,
         height: u32,
         width: u32,
@@ -92,7 +96,7 @@ impl FRIEncoder {
 
         let mut stage = EncoderStage::RawImage(image);
         while !matches!(stage, EncoderStage::SerializedImage(_) | EncoderStage::Failure(_)) {
-            stage = stage.forward(&self.opts);
+            stage = stage.forward(&mut self.opts);
         }
 
         match stage {

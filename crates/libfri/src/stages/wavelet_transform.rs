@@ -480,48 +480,48 @@ impl WaveletImage {
         max_imag: i32,
     ) -> Vec<Complex<i32>> {
         let neighbour_vectors = Fractal::get_nearby_vectors(BASE_FRAC_DEPTH - level);
-        let row_dir = neighbour_vectors[1];
-        let rev_row_dir = neighbour_vectors[4];
-        let col_dir = neighbour_vectors[3];
-        let rev_col_dir = neighbour_vectors[0];
+        let row_dir = neighbour_vectors[3];
+        let rev_row_dir = neighbour_vectors[0];
 
+        let col_dir = neighbour_vectors[1];
+        let rev_col_dir = neighbour_vectors[4];
         //find first
-        let mut first = center;
-        while (global_position_map.contains_key(&first)) {
-            first += rev_row_dir;
-        }
 
-        let mut last_seen = first - rev_row_dir;
+        let mut first = center;
 
         let mut layer_seven_mod = 0;
-        if !global_position_map.contains_key(&(last_seen + col_dir)) && global_position_map.contains_key(&(last_seen + Complex::new(1,1))) {
+        if !global_position_map.contains_key(&(center + rev_row_dir)) && global_position_map.contains_key(&(center + Complex::new(-1,-1))) {
             layer_seven_mod = 1;
         }
+        let mut last_seen = first;
+
+        while (global_position_map.contains_key(&first)) {
+            last_seen = first;
+            if level != 7 {
+                first += rev_row_dir;
+            } else {
+                if layer_seven_mod % 2 == 0 {
+                    first += rev_row_dir
+                } else {
+                    first += Complex::new(-1,-1);
+                }
+                layer_seven_mod+=1;
+            }
+        }
+
 
         // Find first row
         loop {
             let mut column_forward = first;
             let mut column_backward = first;
             let mut empty_column = true;
-            let mut local_layer_seven_mod = layer_seven_mod;
             while (column_forward.im <= max_imag && column_forward.im >= min_imag)
                 || (column_backward.im <= max_imag && column_backward.im >= min_imag)
                 || (column_forward.re <= max_real && column_forward.re >= min_real)
                 || (column_backward.re <= max_real && column_backward.re >= min_real)
             {
-                if level != 7 {
-                    column_forward += col_dir;
-                    column_backward += rev_col_dir;
-                } else {
-                    if layer_seven_mod % 2 == 0 {
-                        column_forward += col_dir;
-                        column_backward += Complex::new(-1, -1);
-                    } else {
-                        column_forward += Complex::new(1, 1);
-                        column_backward += rev_col_dir;
-                    }
-                    layer_seven_mod += 1;
-                }
+                column_forward += col_dir;
+                column_backward += rev_col_dir;
                 if global_position_map.contains_key(&column_forward) {
                     last_seen = column_forward;
                     empty_column = false;
@@ -535,11 +535,18 @@ impl WaveletImage {
             }
             if empty_column {
                 first = last_seen;
-                layer_seven_mod = local_layer_seven_mod;
                 break;
             } else {
-                first += rev_row_dir;
-                local_layer_seven_mod = layer_seven_mod;
+                if level != 7 {
+                    first += rev_row_dir;
+                } else {
+                    if layer_seven_mod % 2 == 0 {
+                        first += rev_row_dir
+                    } else {
+                        first += Complex::new(-1,-1);
+                    }
+                    layer_seven_mod+=1;
+                }
             }
         }
 
@@ -549,29 +556,21 @@ impl WaveletImage {
             && first.re <= max_real
             && first.re >= min_real)
         {
-            if level != 7 {
-                first += rev_col_dir;
-            } else {
-                if layer_seven_mod % 2 == 0 {
-                    first += Complex::new(-1, -1);
-                } else {
-                    first += rev_col_dir
-                }
-
-                layer_seven_mod += 1;
-            }
+            first += rev_col_dir;
             if global_position_map.contains_key(&first) {
                 last_seen = first;
             }
         }
         first = last_seen;
-
+        //dbg!(first);
+        //
+        //dbg!(row_dir, col_dir);
+        layer_seven_mod=1;
         // Fill plane in sorted order
         let mut plane: Vec<Complex<i32>> = Vec::new();
         'outer: loop {
             let mut cnt = 0;
             let mut scan = first;
-            let mut layer_seven_mod = 0;
             loop {
                 if global_position_map.contains_key(&scan) {
                     plane.push(scan);
@@ -582,35 +581,22 @@ impl WaveletImage {
                 {
                     break;
                 }
-
-                if level != 7 {
-                    scan += col_dir;
-                } else {
-                    if layer_seven_mod % 2 == 0 {
-                        scan += col_dir
-                    } else {
-                        scan += Complex::new(1, 1);
-                    }
-
-                    layer_seven_mod += 1;
-                }
+                scan += col_dir;
             }
 
-            first += row_dir;
-            layer_seven_mod = 0;
+            if level != 7 {
+                first += row_dir;
+            } else {
+                if layer_seven_mod % 2 == 0 {
+                    first += Complex::new(1,1);
+                } else {
+                    first += row_dir
+                }
+                layer_seven_mod+=1;
+            }
             while (!global_position_map.contains_key(&first)) {
                 //println!("FORTRACK: {} {}", first.re, first.im);
-                if level != 7 {
-                    first += col_dir;
-                } else {
-                    if layer_seven_mod % 2 == 0 {
-                        first += col_dir
-                    } else {
-                        first += Complex::new(1, 1);
-                    }
-
-                    layer_seven_mod += 1;
-                }
+                first += col_dir;
                 if (!Self::is_pos_in_row_boundary(
                     &first, &row_dir, min_real, max_real, min_imag, max_imag,
                 )) {
@@ -625,17 +611,7 @@ impl WaveletImage {
                     && first.re >= min_real)
                 {
                     //println!("BACKTRACK: {} {}", first.re, first.im);
-                    if level != 7 {
-                        first += rev_col_dir;
-                    } else {
-                        if layer_seven_mod % 2 == 0 {
-                            first += Complex::new(-1, -1);
-                        } else {
-                            first += rev_col_dir
-                        }
-
-                        layer_seven_mod += 1;
-                    }
+                    first += rev_col_dir;
 
                     if global_position_map.contains_key(&first) {
                         //println!("BACKTRACK SOME: {} {}", first.re, first.im);

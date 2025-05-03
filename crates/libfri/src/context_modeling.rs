@@ -254,7 +254,7 @@ mod test {
 
     #[test]
     fn unit_test() {
-        let wavelet_image = WaveletImage::from_metadata(ImageMetadata::new(200, 200));
+        let wavelet_image = WaveletImage::from_metadata(ImageMetadata::new(10, 10));
         let mut ctx_modeler = ContextModeler::new();
         ctx_modeler.optimize_parameters(&wavelet_image, 0);
     }

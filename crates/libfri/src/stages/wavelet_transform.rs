@@ -29,11 +29,13 @@ pub struct Fractal {
     pub depth: u8,
     pub center: Complex<i32>,
     pub coefficients: [Vec<Option<i32>>; 3],
+    pub parameter_predictors: [Vec<(usize, i32)>; 3],
     pub values: [Vec<Option<i32>>; 3],
-    pub buckets: [Vec<u32>; 3],
     pub position_map: Vec<HashMap<Complex<i32>, usize>>,
     pub image_positions: Vec<Complex<i32>>,
 }
+
+const BASE_FRAC_DEPTH: u8 = 9;
 
 impl Fractal {
     fn new(depth: u8, center: Complex<i32>) -> Self {
@@ -54,10 +56,10 @@ impl Fractal {
             depth,
             center,
             coefficients: [vec![], vec![], vec![]],
-            buckets: [
-                vec![0; 1 << depth],
-                vec![0; 1 << depth],
-                vec![0; 1 << depth],
+            parameter_predictors: [
+                vec![(0, 0); 1 << depth],
+                vec![(0, 0); 1 << depth],
+                vec![(0, 0); 1 << depth],
             ],
             position_map,
             image_positions,
@@ -66,17 +68,17 @@ impl Fractal {
     }
 
     fn get_nearby_vectors(depth: u8) -> [Complex<i32>; 6] {
-        if depth == 0 {
+        if depth == 1 {
             let zl = Complex::new(-1, 1);
-            let zmd = Complex::new(-1,-1);
-            return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
-        } else if depth == 1 {
-            let zl = Complex::new(2, 0);
-            let zmd = Complex::new(2,-2);
+            let zmd = Complex::new(0, 2);
             return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
         } else if depth == 2 {
+            let zl = Complex::new(-2, 0);
+            let zmd = Complex::new(-0, -2);
+            return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
+        } else if depth == 3 {
             let zl = Complex::new(-3, -1);
-            let zmd = Complex::new(2,-2);
+            let zmd = Complex::new(-1, -3);
             return [zl, zl - zmd, -zmd, -zl, zmd - zl, zmd];
         } else {
             let zl = LITERALS[depth as usize];
@@ -153,7 +155,6 @@ impl Fractal {
             vec![None; 1 << depth],
             vec![None; 1 << depth],
         ];
-;
         for channel in 0..raster_image.metadata.colorspace.num_channels() {
             for level in (0..depth).rev() {
                 // compute high-pass and low-pass components
@@ -265,7 +266,7 @@ fn get_hf_context_bucket(
                     0
                 }
             } else {
-                let loc = fractal.position_map[parent_level+1][pos];
+                let loc = fractal.position_map[parent_level + 1][pos];
                 fractal.coefficients[channel][loc].unwrap_or(0)
             }
         })
@@ -273,8 +274,6 @@ fn get_hf_context_bucket(
 }
 impl RasterImage {
     pub fn from_wavelet(wavelet_image: WaveletImage) -> RasterImage {
-        let sorted_keys: Vec<Complex<i32>> = wavelet_image.get_sorted_lattice();
-
         let mut raster = RasterImage {
             data: vec![
                 0;
@@ -299,25 +298,23 @@ impl RasterImage {
 
             for level in 2..depth {
                 for pos in 1 << level..1 << (level + 1) {
-                        get_hf_context_bucket(
-                            &mut raster,
-                            pos,
-                            level,
-                            &center,
-                            &wavelet_image.fractal_lattice,
-                            &[1., 1., 1., 1., 1., 1.],
-                            0,
-                        );
+                    get_hf_context_bucket(
+                        &mut raster,
+                        pos,
+                        level,
+                        &center,
+                        &wavelet_image.fractal_lattice,
+                        &[1., 1., 1., 1., 1., 1.],
+                        0,
+                    );
                 }
             }
             let find = Complex::new(220, 129);
             for (center, fractal) in wavelet_image.fractal_lattice.iter() {
                 for (i, dep) in fractal.position_map.iter().enumerate() {
-                    if(dep.contains_key(&find)) {
+                    if (dep.contains_key(&find)) {
                         println!("found! {} {}", i, center);
                     }
-                    
-
                 }
                 color_pixel(&mut raster, center, 255, 2);
             }
@@ -355,6 +352,8 @@ impl RasterImage {
 pub struct WaveletImage {
     pub metadata: ImageMetadata,
     pub fractal_lattice: HashMap<Complex<i32>, Fractal>,
+    pub global_position_map: Vec<HashMap<Complex<i32>, Complex<i32>>>,
+    pub sorted_lattice: [Vec<Complex<i32>>; BASE_FRAC_DEPTH as usize],
 }
 
 impl WaveletImage {
@@ -372,8 +371,11 @@ impl WaveletImage {
     }
 
     pub fn from_raster(raster_image: RasterImage) -> WaveletImage {
-        let mut fractal_lattice =
-            Self::fractal_divide(raster_image.metadata.width, raster_image.metadata.height, 9);
+        let mut fractal_lattice = Self::fractal_divide(
+            raster_image.metadata.width,
+            raster_image.metadata.height,
+            BASE_FRAC_DEPTH,
+        );
 
         for (_, fractal) in fractal_lattice.iter_mut() {
             fractal.extract_coefficients(&raster_image, fractal.depth);
@@ -381,10 +383,36 @@ impl WaveletImage {
         fractal_lattice
             .retain(|_, frac| frac.coefficients.iter().all(|channel| channel[0].is_some()));
 
+        let global_position_map = Self::get_global_position_map(&fractal_lattice);
+        let sorted_lattice = Self::sort_lattice(
+            &fractal_lattice,
+            &global_position_map,
+            raster_image.metadata.height,
+            raster_image.metadata.width,
+        );
+
         WaveletImage {
             metadata: raster_image.metadata,
+            global_position_map,
             fractal_lattice,
+            sorted_lattice,
         }
+    }
+
+    fn get_global_position_map(
+        fractal_lattice: &HashMap<Complex<i32>, Fractal>,
+    ) -> Vec<HashMap<Complex<i32>, Complex<i32>>> {
+        let mut position_map = vec![HashMap::new(); BASE_FRAC_DEPTH as usize];
+
+        for (center, frac) in fractal_lattice.iter() {
+            for level in 0..BASE_FRAC_DEPTH {
+                for position in &frac.image_positions[1 << level..(1 << level + 1)] {
+                    position_map[level as usize].insert(*position, *center);
+                }
+            }
+        }
+
+        position_map
     }
 
     fn fractal_divide(width: u32, height: u32, depth: u8) -> HashMap<Complex<i32>, Fractal> {
@@ -423,30 +451,251 @@ impl WaveletImage {
         fractal_lattice
     }
 
-    pub fn get_sorted_lattice(&self) -> Vec<Complex<i32>> {
-        let mut keys: Vec<Complex<i32>> = self.fractal_lattice.keys().cloned().collect();
-        let depth = self.fractal_lattice[&keys[0]].depth;
+    pub fn get_sorted_lattice(&self) -> &[Vec<Complex<i32>>; BASE_FRAC_DEPTH as usize] {
+        &self.sorted_lattice
+    }
 
-        let mut sorted_fractalwise: Vec<Complex<i32>> = Vec::new();
+    fn is_pos_in_row_boundary(
+        pos: &Complex<i32>,
+        row_dir: &Complex<i32>,
+        min_real: i32,
+        max_real: i32,
+        min_imag: i32,
+        max_imag: i32,
+    ) -> bool {
+        if row_dir.re.abs() > row_dir.im.abs() {
+            pos.im >= min_imag && pos.im <= max_imag
+        } else {
+            pos.re >= min_real && pos.re <= max_real
+        }
+    }
 
-        let mut first = keys.iter().min_by_key(|a| a.re + a.im).unwrap().clone();
+    fn scan_level(
+        level: u8,
+        center: Complex<i32>,
+        global_position_map: &HashMap<Complex<i32>, Complex<i32>>,
+        min_real: i32,
+        max_real: i32,
+        min_imag: i32,
+        max_imag: i32,
+    ) -> Vec<Complex<i32>> {
+        let neighbour_vectors = Fractal::get_nearby_vectors(BASE_FRAC_DEPTH - level);
+        let row_dir = neighbour_vectors[1];
+        let rev_row_dir = neighbour_vectors[4];
+        let col_dir = neighbour_vectors[3];
+        let rev_col_dir = neighbour_vectors[0];
 
+        //find first
+        let mut first = center;
+        while (global_position_map.contains_key(&first)) {
+            first += rev_row_dir;
+        }
+
+        let mut last_seen = first - rev_row_dir;
+
+        let mut layer_seven_mod = 0;
+        if !global_position_map.contains_key(&(last_seen + col_dir)) && global_position_map.contains_key(&(last_seen + Complex::new(1,1))) {
+            layer_seven_mod = 1;
+        }
+
+        // Find first row
         loop {
-            let mut scan = first;
-            loop {
-                if self.fractal_lattice.get(&scan).is_some() {
-                    sorted_fractalwise.push(scan);
+            let mut column_forward = first;
+            let mut column_backward = first;
+            let mut empty_column = true;
+            let mut local_layer_seven_mod = layer_seven_mod;
+            while (column_forward.im <= max_imag && column_forward.im >= min_imag)
+                || (column_backward.im <= max_imag && column_backward.im >= min_imag)
+                || (column_forward.re <= max_real && column_forward.re >= min_real)
+                || (column_backward.re <= max_real && column_backward.re >= min_real)
+            {
+                if level != 7 {
+                    column_forward += col_dir;
+                    column_backward += rev_col_dir;
+                } else {
+                    if layer_seven_mod % 2 == 0 {
+                        column_forward += col_dir;
+                        column_backward += Complex::new(-1, -1);
+                    } else {
+                        column_forward += Complex::new(1, 1);
+                        column_backward += rev_col_dir;
+                    }
+                    layer_seven_mod += 1;
                 }
-                if scan.re > self.metadata.width as i32 {
+                if global_position_map.contains_key(&column_forward) {
+                    last_seen = column_forward;
+                    empty_column = false;
                     break;
                 }
-                scan = Fractal::get_right(scan, depth);
+                if global_position_map.contains_key(&column_backward) {
+                    last_seen = column_backward;
+                    empty_column = false;
+                    break;
+                }
+            }
+            if empty_column {
+                first = last_seen;
+                layer_seven_mod = local_layer_seven_mod;
+                break;
+            } else {
+                first += rev_row_dir;
+                local_layer_seven_mod = layer_seven_mod;
+            }
+        }
+
+        // Scanning backwards find first column
+        while (first.im <= max_imag
+            && first.im >= min_imag
+            && first.re <= max_real
+            && first.re >= min_real)
+        {
+            if level != 7 {
+                first += rev_col_dir;
+            } else {
+                if layer_seven_mod % 2 == 0 {
+                    first += Complex::new(-1, -1);
+                } else {
+                    first += rev_col_dir
+                }
+
+                layer_seven_mod += 1;
+            }
+            if global_position_map.contains_key(&first) {
+                last_seen = first;
+            }
+        }
+        first = last_seen;
+
+        // Fill plane in sorted order
+        let mut plane: Vec<Complex<i32>> = Vec::new();
+        'outer: loop {
+            let mut cnt = 0;
+            let mut scan = first;
+            let mut layer_seven_mod = 0;
+            loop {
+                if global_position_map.contains_key(&scan) {
+                    plane.push(scan);
+                    cnt += 1;
+                }
+                if ((scan.im > max_imag || scan.im < min_imag)
+                    || (col_dir.im == 0 && (scan.re > max_real || scan.re < min_real)))
+                {
+                    break;
+                }
+
+                if level != 7 {
+                    scan += col_dir;
+                } else {
+                    if layer_seven_mod % 2 == 0 {
+                        scan += col_dir
+                    } else {
+                        scan += Complex::new(1, 1);
+                    }
+
+                    layer_seven_mod += 1;
+                }
             }
 
-            if sorted_fractalwise.len() == keys.len() {
-                break;
+            first += row_dir;
+            layer_seven_mod = 0;
+            while (!global_position_map.contains_key(&first)) {
+                //println!("FORTRACK: {} {}", first.re, first.im);
+                if level != 7 {
+                    first += col_dir;
+                } else {
+                    if layer_seven_mod % 2 == 0 {
+                        first += col_dir
+                    } else {
+                        first += Complex::new(1, 1);
+                    }
+
+                    layer_seven_mod += 1;
+                }
+                if (!Self::is_pos_in_row_boundary(
+                    &first, &row_dir, min_real, max_real, min_imag, max_imag,
+                )) {
+                    break 'outer;
+                }
             }
-            first = Fractal::get_down_left(first, depth);
+            if global_position_map.contains_key(&first) {
+                last_seen = first;
+                while (first.im <= max_imag
+                    && first.im >= min_imag
+                    && first.re <= max_real
+                    && first.re >= min_real)
+                {
+                    //println!("BACKTRACK: {} {}", first.re, first.im);
+                    if level != 7 {
+                        first += rev_col_dir;
+                    } else {
+                        if layer_seven_mod % 2 == 0 {
+                            first += Complex::new(-1, -1);
+                        } else {
+                            first += rev_col_dir
+                        }
+
+                        layer_seven_mod += 1;
+                    }
+
+                    if global_position_map.contains_key(&first) {
+                        //println!("BACKTRACK SOME: {} {}", first.re, first.im);
+                        last_seen = first;
+                    }
+                }
+                first = last_seen;
+            }
+
+            //println!("NEXT_ROW, size of last: {}", cnt);
+        }
+        plane
+    }
+
+    // TODO: Simplify this logic from hell
+    fn sort_lattice(
+        fractal_lattice: &HashMap<Complex<i32>, Fractal>,
+        global_position_map: &Vec<HashMap<Complex<i32>, Complex<i32>>>,
+        height: u32,
+        width: u32,
+    ) -> [Vec<Complex<i32>>; BASE_FRAC_DEPTH as usize] {
+        let keys: Vec<Complex<i32>> = fractal_lattice.keys().cloned().collect();
+        let depth = fractal_lattice[&keys[0]].depth;
+
+        let min_real = global_position_map[BASE_FRAC_DEPTH as usize - 1]
+            .keys()
+            .min_by_key(|x| x.re)
+            .unwrap()
+            .re;
+        let max_real = global_position_map[BASE_FRAC_DEPTH as usize - 1]
+            .keys()
+            .max_by_key(|x| x.re)
+            .unwrap()
+            .re;
+        let min_imag = global_position_map[BASE_FRAC_DEPTH as usize - 1]
+            .keys()
+            .min_by_key(|x| x.im)
+            .unwrap()
+            .im;
+        let max_imag = global_position_map[BASE_FRAC_DEPTH as usize - 1]
+            .keys()
+            .max_by_key(|x| x.im)
+            .unwrap()
+            .im;
+
+        let mut sorted_fractalwise: [Vec<Complex<i32>>; 9] = Default::default();
+        let center = Complex::<i32>::new(width as i32 / 2, height as i32 / 2);
+
+        for level in (0..BASE_FRAC_DEPTH) {
+            let plane = Self::scan_level(
+                level,
+                center,
+                &global_position_map[level as usize],
+                min_real,
+                max_real,
+                min_imag,
+                max_imag,
+            );
+            assert_eq!(plane.len(), fractal_lattice.len() * (1 << level));
+            sorted_fractalwise[level as usize] = plane;
         }
         sorted_fractalwise
     }

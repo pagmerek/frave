@@ -6,10 +6,10 @@ use std::io::Write;
 use num::pow::Pow;
 use num::Complex;
 
+use crate::context_modeling::ContextModeler;
 use crate::encoder::EncoderOpts;
 use crate::stages::entropy_coding::AnsContext;
 use crate::stages::wavelet_transform::{Fractal, WaveletImage};
-use crate::context_modeling::{ContextModeler};
 use crate::{fractal, utils};
 
 pub const CONTEXT_AMOUNT: usize = 1;
@@ -21,6 +21,7 @@ fn emit_coefficients(data: &[u32], ctx_id: usize, ctx_channel: usize) {
         ctx_channel, ctx_id
     ))
     .expect("Unable to create coef file");
+
     for i in data {
         write!(f, "{}\n", i).unwrap();
     }
@@ -89,14 +90,14 @@ pub fn get_lf_context_bucket(
     let difference: u32 = (values[0] - values[2]).abs() as u32;
 
     //let bucket = match difference {
-    //    0..3 => 0,
-    //    3..6 => 1,
-    //    6..10 => 2,
-    //    10..20 => 3,
-    //    20..40 => 4,
-    //    40..60 => 5,
-    //    60..90 => 6,
-    //    90.. => 7,
+    //    0..5 => 0,
+    //    5..6 => 1,
+    //    6..8 => 2,
+    //    8..12 => 3,
+    //    12..16 => 4,
+    //    16..20 => 5,
+    //    20..25 => 6,
+    //    25.. => 7,
     //};
     let bucket = 0;
 
@@ -109,7 +110,7 @@ pub fn get_lf_context_bucket(
     };
     //let prediction = 0;
 
-    (bucket, prediction as i32)
+    (bucket, 0 as i32)
 }
 
 pub fn get_hf_context_bucket(
@@ -117,34 +118,58 @@ pub fn get_hf_context_bucket(
     current_depth: u8,
     parent_fractal_pos: &Complex<i32>,
     fractal_lattice: &HashMap<Complex<i32>, Fractal>,
-    value_prediction_params: &[f32; 6],
+    value_prediction_params: &Vec<[f32; 6]>,
+    width_prediction_params: &Vec<[f32; 2]>,
     channel: usize,
 ) -> (usize, i32) {
     assert!(current_depth > 0);
-    let parent_level = current_depth as usize - 1;
-    let values = ContextModeler::get_neighbour_values(position, current_depth, parent_fractal_pos, fractal_lattice, channel);
-    let difference: u32 = (values[0] - values[3]).abs() as u32;
-    let difference_horiz1: u32 = (values[1] - values[4]).abs() as u32;
-    let difference_horiz2: u32 = (values[2] - values[5]).abs() as u32;
 
-    //let bucket = match difference {
-    //    0..3 => 0,
-    //    3..6 => 1,
-    //    6..10 => 2,
-    //    10..20 => 3,
-    //    20..40 => 4,
-    //    40..60 => 5,
-    //    60..90 => 6,
-    //    90.. => 7,
+    let depth = fractal_lattice[parent_fractal_pos].depth - 2;
+
+    let value_prediction_params_layer = if current_depth < depth {
+        value_prediction_params[2]
+    } else if current_depth == depth - 2 {
+        value_prediction_params[1]
+    } else {
+        value_prediction_params[0]
+    };
+
+    //let width_prediction_params_layer = if current_depth <  depth {
+    //    width_prediction_params[2]
+    //} else if current_depth == depth - 2 {
+    //    width_prediction_params[1]
+    //} else {
+    //    width_prediction_params[0]
+    //};
+
+    let parent_level = current_depth as usize - 1;
+    let values = ContextModeler::get_neighbour_values(
+        position,
+        current_depth,
+        parent_fractal_pos,
+        fractal_lattice,
+        channel,
+    );
+    //let width = width_prediction_params_layer[0] + width_prediction_params_layer[1] * ((values[0] - values[3]).abs() as f32);
+
+    //let bucket = match width as u32 {
+    //    0..5 => 0,
+    //    5..6 => 1,
+    //    6..8 => 2,
+    //    8..12 => 3,
+    //    12..16 => 4,
+    //    16..20 => 5,
+    //    20..25 => 6,
+    //    25.. => 7,
     //};
     let bucket = 0;
 
-    let prediction = (values[0] as f32) * value_prediction_params[0]
-        + (values[1] as f32) * value_prediction_params[1]
-        + (values[2] as f32) * value_prediction_params[2]
-        + (values[3] as f32) * value_prediction_params[3]
-        + (values[4] as f32) * value_prediction_params[4]
-        + (values[5] as f32) * value_prediction_params[5];
+    let prediction = (values[0] as f32) * value_prediction_params_layer[0]
+        + (values[1] as f32) * value_prediction_params_layer[1]
+        + (values[2] as f32) * value_prediction_params_layer[2]
+        + (values[3] as f32) * value_prediction_params_layer[3]
+        + (values[4] as f32) * value_prediction_params_layer[4]
+        + (values[5] as f32) * value_prediction_params_layer[5];
 
     (bucket as usize, prediction as i32)
 }
@@ -165,50 +190,73 @@ pub fn encode(
     encoder_opts: &mut EncoderOpts,
 ) -> Result<[Vec<AnsContext>; 3], String> {
     let mut contexts: [Vec<AnsContext>; 3] = [vec![], vec![], vec![]];
+    let mut ctx_mod = ContextModeler::new();
+    let sorted_lattice = wavelet_image.get_sorted_lattice().clone();
     for channel in 0..wavelet_image.metadata.colorspace.num_channels() {
-        let ctx_mod = ContextModeler::new();
-        let prediction_params = ctx_mod.optimize_parameters(&wavelet_image, channel);
-        encoder_opts.value_prediction_params[channel] = prediction_params;
+        ctx_mod.optimize_parameters(&wavelet_image, channel);
+
+        encoder_opts.value_prediction_params[channel] = ctx_mod.value_predictors[channel].clone();
+        encoder_opts.width_prediction_params[channel] = ctx_mod.width_predictors[channel].clone();
 
         contexts[channel] = vec![AnsContext::new(); CONTEXT_AMOUNT];
-        let sorted_keys: Vec<Complex<i32>> = wavelet_image.get_sorted_lattice();
         let mut mse: Vec<i32> = vec![];
+        let depth = wavelet_image.fractal_lattice[&sorted_lattice[0][0]].depth;
 
-        for key in sorted_keys.iter() {
-            let fractal = &wavelet_image.fractal_lattice[key];
-            if let Some(value) = fractal.coefficients[channel][0] {
+        for (i, image_pos) in sorted_lattice[0].iter().enumerate() {
+            let fractal = &wavelet_image.fractal_lattice.get(image_pos).unwrap();
+            let haar_tree_pos = fractal.position_map[0 as usize].get(&image_pos).unwrap();
+            if let Some(value) = fractal.coefficients[channel][1] {
                 let (bucket, prediction) =
-                    get_lf_context_bucket(0, 0, key, &wavelet_image.fractal_lattice, channel);
-                contexts[channel][bucket].bump_freq(utils::pack_signed(value - prediction));
+                    get_lf_context_bucket(0, 0, image_pos, &wavelet_image.fractal_lattice, channel);
+                let residual = value - prediction;
+                {
+                    let mut mut_frac = wavelet_image.fractal_lattice.get_mut(image_pos).unwrap();
+                    mut_frac.parameter_predictors[channel][0] = (bucket, prediction);
+                    contexts[channel][bucket].bump_freq(utils::pack_signed(residual));
+                }
             }
         }
 
         // Second scan -> High frequency coefficient root
-        for key in sorted_keys.iter() {
-            let fractal = &wavelet_image.fractal_lattice[key];
+        for (i, image_pos) in sorted_lattice[0].iter().enumerate() {
+            let fractal = &wavelet_image.fractal_lattice.get(image_pos).unwrap();
+            let haar_tree_pos = fractal.position_map[0 as usize].get(&image_pos).unwrap();
             if let Some(value) = fractal.coefficients[channel][1] {
                 let (bucket, prediction) =
-                    get_lf_context_bucket(1, 0, key, &wavelet_image.fractal_lattice, channel);
-                contexts[channel][bucket].bump_freq(utils::pack_signed(value - prediction));
+                    get_lf_context_bucket(1, 0, image_pos, &wavelet_image.fractal_lattice, channel);
+                let residual = value - prediction;
+                {
+                    let mut mut_frac = wavelet_image.fractal_lattice.get_mut(image_pos).unwrap();
+                    mut_frac.parameter_predictors[channel][1] = (bucket, prediction);
+                    contexts[channel][bucket].bump_freq(utils::pack_signed(residual));
+                }
             }
         }
 
-        for level in 1..wavelet_image.fractal_lattice[&sorted_keys[0]].depth {
-            for key in sorted_keys.iter() {
-                let fractal = &wavelet_image.fractal_lattice[key];
-                for pos in 1 << level..1 << (level + 1) {
-                    if let Some(value) = fractal.coefficients[channel][pos] {
-                        let (bucket, prediction) = get_hf_context_bucket(
-                            pos,
-                            level,
-                            key,
-                            &wavelet_image.fractal_lattice,
-                            &encoder_opts.value_prediction_params[channel],
-                            channel,
-                        );
-                        mse.push((value - prediction).pow(2));
-                        contexts[channel][bucket].bump_freq(utils::pack_signed(value - prediction));
-                    }
+        for level in (1..depth).rev() {
+            for (i, image_pos) in sorted_lattice[level as usize].iter().enumerate() {
+                let parent_pos = wavelet_image.global_position_map[level as usize][&image_pos];
+                let fractal = &wavelet_image.fractal_lattice.get(&parent_pos).unwrap();
+                let haar_tree_pos = fractal.position_map[level as usize]
+                    .get(&image_pos)
+                    .unwrap()
+                    .clone();
+                if let Some(value) = fractal.coefficients[channel][haar_tree_pos]
+                {
+                    let (bucket, prediction) = get_hf_context_bucket(
+                        haar_tree_pos,
+                        level,
+                        &parent_pos,
+                        &wavelet_image.fractal_lattice,
+                        &encoder_opts.value_prediction_params[channel],
+                        &encoder_opts.width_prediction_params[channel],
+                        channel,
+                    );
+                    let residual = value - prediction;
+                    mse.push((residual).pow(2));
+                    contexts[channel][bucket].bump_freq(utils::pack_signed(residual));
+                    let mut mut_frac = wavelet_image.fractal_lattice.get_mut(&parent_pos).unwrap();
+                    mut_frac.parameter_predictors[channel][haar_tree_pos] = (bucket, prediction);
                 }
             }
         }
@@ -231,6 +279,7 @@ pub fn encode(
             }
         }
     }
+    //dbg!(&ctx_mod);
 
     Ok(contexts)
 }

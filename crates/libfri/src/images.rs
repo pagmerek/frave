@@ -113,5 +113,5 @@ impl RasterImage {
 
 pub struct CompressedImage {
     pub metadata: ImageMetadata,
-    pub channel_data: [Option<(Vec<AnsContext>, Vec<u8>, [f32;6])>; 3],
+    pub channel_data: [Option<(Vec<AnsContext>, Vec<u8>, Vec<[f32;6]>)>; 3],
 }

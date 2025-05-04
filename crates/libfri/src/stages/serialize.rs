@@ -93,14 +93,14 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
         for ctx in ans_contexts {
             serial.extend_from_slice(Segments::EHD);
             serial.extend_from_slice(
-                &(ctx.freqs.len() * mem::size_of_val(&ctx.freqs[0])).to_le_bytes(),
+                &(ctx.max_freq_bits).to_le_bytes(),
             );
-            serial.extend_from_slice(
-                &ctx.freqs
-                    .iter()
-                    .flat_map(|s| s.to_le_bytes())
-                    .collect::<Vec<u8>>(),
-            );
+            //serial.extend_from_slice(
+            //    &ctx.freqs
+            //        .iter()
+            //        .flat_map(|s| s.to_le_bytes())
+            //        .collect::<Vec<u8>>(),
+            //);
         }
         serial.extend_from_slice(Segments::DAT);
         serial.extend_from_slice(&data.len().to_le_bytes());
@@ -213,19 +213,21 @@ fn deserialize_channel_data(
             Segments::EHD => {
                 offset += 2;
 
-                let hist_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into()?) as usize;
-                offset += 8;
+                let hist_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into()?);
+                offset += 4;
 
-                let freqs: Vec<u32> = bytes[offset..offset + hist_len]
-                    .chunks_exact(4)
-                    .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
-                    .collect();
-
-                offset += hist_len;
+                //let freqs: Vec<u32> = bytes[offset..offset + hist_len]
+                //    .chunks_exact(4)
+                //    .map(|e| u32::from_le_bytes(e.try_into().unwrap()))
+                //    .collect();
+                //
+                //offset += hist_len;
 
                 let mut context = AnsContext::new();
-                context.freqs = (*freqs.into_boxed_slice()).try_into().unwrap();
-                context.finalize_context(false);
+
+                context.max_freq_bits = hist_len;
+                //context.freqs = (*freqs.into_boxed_slice()).try_into().unwrap();
+                context.finalize_context(true, ans_contexts.len());
                 ans_contexts.push(context)
             }
             Segments::DAT => {

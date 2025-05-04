@@ -45,7 +45,7 @@ pub fn benchmark(cmd: BenchCommand) {
 
         let result = encoder.encode(data, height, width, frifcolor).unwrap_or_else(|e| panic!("Cannot encode {}, reason: {}", img_path.file_name().unwrap().to_str().unwrap(), e));
 
-        let compression_rate = (uncompressed_size as f32 - result.len() as f32)/uncompressed_size as f32 * 100.;
+        let compression_rate = (uncompressed_size as f32 - (result.len()) as f32)/uncompressed_size as f32 * 100.;
         let png_compression_rate = (uncompressed_size as f32 - png_size as f32)/uncompressed_size as f32 * 100.;
         println!("FILE {}", img_path.file_name().unwrap().to_str().unwrap());
         println!("Before compression size: {}", uncompressed_size);

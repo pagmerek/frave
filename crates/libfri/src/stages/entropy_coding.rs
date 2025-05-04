@@ -20,6 +20,8 @@ use rans::{RansDecSymbol, RansEncSymbol};
 
 use crate::stages::prediction::CONTEXT_AMOUNT;
 
+use super::prediction::{get_width_from_bucket, laplace_distribution};
+
 pub const ALPHABET_SIZE: usize = 1024;
 
 //fn get_first_some_starting_from(i: usize, vec: &Vec<Option<i32>>) -> usize {
@@ -75,15 +77,35 @@ impl AnsContext {
         }
     }
 
+    fn fill_with_laplace(&mut self, bucket: usize) {
+        let width = get_width_from_bucket(bucket);
+        for (j, freq) in self.freqs.iter_mut().enumerate() {
+            //if j == 0 {
+            //    continue;
+            //}
+            let laplace_value = (laplace_distribution(utils::unpack_signed(j as u32) as f32, 0., width) * (1<<self.max_freq_bits) as f32) as u32;
+            if *freq != 0 && laplace_value == 0 {
+                if bucket == 0 {
+                    dbg!(j);
+                }
+            } else {
+               *freq = laplace_value;
+            }
+        }
+    }
+
     pub fn bump_freq(&mut self, element: u32) {
         self.freqs[element as usize] += 1;
     }
 
-    pub fn finalize_context(&mut self, normalize: bool) {
+    pub fn finalize_context(&mut self, normalize: bool, bucket: usize) {
+        if self.max_freq_bits < 8 {
+            self.max_freq_bits = 8
+        }
+
+        self.fill_with_laplace(bucket);
         if normalize {
-            let max_freq_bits =
-                utils::get_prev_power_two(self.freqs.iter().sum::<u32>() as usize).trailing_zeros();
-            self.cdf = self.normalize_freqs(1 << max_freq_bits);
+            self.cdf = self.normalize_freqs(1 << self.max_freq_bits);
         } else {
             self.cdf = self.get_cdf();
         }

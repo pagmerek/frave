@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::Write;
 
 use num::pow::Pow;
-use num::Complex;
+use num::{Complex, PrimInt};
 
 use crate::context_modeling::ContextModeler;
 use crate::encoder::EncoderOpts;
@@ -12,7 +12,7 @@ use crate::stages::entropy_coding::AnsContext;
 use crate::stages::wavelet_transform::{Fractal, WaveletImage};
 use crate::{fractal, utils};
 
-pub const CONTEXT_AMOUNT: usize = 9;
+pub const CONTEXT_AMOUNT: usize = 10;
 
 fn emit_coefficients(data: &[u32], ctx_id: usize, ctx_channel: usize) {
     std::fs::create_dir_all("./coefficients").unwrap();
@@ -50,6 +50,37 @@ fn get_containing_fractal(
         }
     }
     None
+}
+
+pub fn assign_bucket(width: f32) -> usize {
+    match width as u32 {
+        0..3 => 0,
+        3..5 => 1,
+        5..6 => 2,
+        6..8 => 3,
+        8..12 => 4,
+        12..16 => 5,
+        16..20 => 6,
+        20..25 => 7,
+        25..30 => 8,
+        30.. => 9,
+    }
+}
+
+pub fn get_width_from_bucket(bucket: usize) -> f32 {
+    match bucket as u32 {
+        0 => 2.5,
+        1 => 4.5,
+        2 => 6.3,
+        3 => 8.,
+        4 => 12.,
+        5 => 16.,
+        6 => 20.,
+        7 => 24.,
+        8 => 28.,
+        9 => 36.,
+        10.. => 50.
+    }
 }
 
 pub fn get_lf_context_bucket(
@@ -100,19 +131,9 @@ pub fn get_lf_context_bucket(
         })
         .collect();
 
-    let difference: u32 = (values[0] - values[2]).abs() as u32;
+    let width: u32 = (values[0] - values[2]).abs() as u32;
 
-    let bucket = match difference {
-        0..5 => 0,
-        5..6 => 1,
-        6..8 => 2,
-        8..12 => 3,
-        12..16 => 4,
-        16..20 => 5,
-        20..25 => 6,
-        25..30 => 7,
-        30.. => 8,
-    };
+    let bucket = assign_bucket(width as f32);
 
     let prediction = if values[1] >= max(values[0], values[2]) {
         max(values[0], values[2])
@@ -166,10 +187,6 @@ pub fn get_hf_context_bucket(
         channel,
     );
 
-    //let gradient_upper_horizn = (row[1] - row[2]).abs();
-    //let gradient_down_horizn = (row[4] - row[5]).abs();
-    //let gradient_vert_left = (row[1] - row[5]).abs();
-    //let gradient_vert_right = (row[2] - row[4]).abs();
     let width = width_prediction_params_layer[0]
         + width_prediction_params_layer[1] * ((values[0] - values[3]).abs() as f32)
         + width_prediction_params_layer[2] * ((values[1] - values[2]).abs() as f32)
@@ -177,18 +194,7 @@ pub fn get_hf_context_bucket(
         + width_prediction_params_layer[4] * ((values[1] - values[5]).abs() as f32)
         + width_prediction_params_layer[5] * ((values[2] - values[4]).abs() as f32);
 
-    let bucket = match width as u32 {
-        0..5 => 0,
-        5..6 => 1,
-        6..8 => 2,
-        8..12 => 3,
-        12..16 => 4,
-        16..20 => 5,
-        20..25 => 6,
-        25..30 => 7,
-        30.. => 8,
-    };
-    //let bucket = 0;
+    let bucket = assign_bucket(width);
 
     let prediction = (values[0] as f32) * value_prediction_params_layer[0]
         + (values[1] as f32) * value_prediction_params_layer[1]
@@ -209,6 +215,10 @@ fn get_entropy(histogram: &[u32], total_size: usize) -> f32 {
         }
     }
     -entropy
+}
+
+pub fn laplace_distribution(x: f32, center: f32, width: f32) -> f32 {
+    (-(x-center).abs()/width).exp()/(2.0*width)
 }
 
 pub fn encode(
@@ -290,7 +300,9 @@ pub fn encode(
         emit_mse(&mse, channel);
 
         for (i, ctx) in contexts[channel].iter_mut().enumerate() {
-            ctx.finalize_context(true);
+            ctx.max_freq_bits =
+                utils::get_prev_power_two(ctx.freqs.iter().sum::<u32>() as usize).trailing_zeros();
+            ctx.finalize_context(true, i);
             if encoder_opts.verbose {
                 println!(
                     "CHANNEL: {}, size: {}, entropy: {}",

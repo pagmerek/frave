@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt::Display;
 use std::mem;
 
-use crate::images::{ColorSpace, FractalVariant, CompressedImage, ImageMetadata};
+use crate::images::{ChannelData, ColorSpace, CompressedImage, FractalVariant, ImageMetadata};
 use crate::stages::entropy_coding::{AnsContext, ALPHABET_SIZE};
 
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub enum SerializeError {
     InvalidSignature,
     InvalidMetadata,
     MalformedImageBytes,
-    SliceConversion(TryFromSliceError)
+    SliceConversion(TryFromSliceError),
 }
 
 impl Display for SerializeError {
@@ -66,18 +66,31 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
     serial.extend_from_slice(&mdat.to_le_bytes());
 
     let mut i = 0;
-    while let Some((ctxs, encoded_bytes, value_prediction_params)) = &image.channel_data[i].take() {
+    while let Some(ChannelData {
+        ans_contexts,
+        data,
+        value_prediction_parameters,
+        width_prediction_parameters,
+    }) = &image.channel_data[i].take()
+    {
         i += 1;
 
         serial.extend_from_slice(Segments::PRD);
         serial.extend_from_slice(
-            &value_prediction_params
+            &value_prediction_parameters
                 .iter()
                 .flat_map(|s| s.iter().flat_map(|x| x.to_le_bytes()))
                 .collect::<Vec<u8>>(),
         );
 
-        for ctx in ctxs {
+        serial.extend_from_slice(
+            &width_prediction_parameters
+                .iter()
+                .flat_map(|s| s.iter().flat_map(|x| x.to_le_bytes()))
+                .collect::<Vec<u8>>(),
+        );
+
+        for ctx in ans_contexts {
             serial.extend_from_slice(Segments::EHD);
             serial.extend_from_slice(
                 &(ctx.freqs.len() * mem::size_of_val(&ctx.freqs[0])).to_le_bytes(),
@@ -90,8 +103,8 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
             );
         }
         serial.extend_from_slice(Segments::DAT);
-        serial.extend_from_slice(&encoded_bytes.len().to_le_bytes());
-        serial.extend(encoded_bytes);
+        serial.extend_from_slice(&data.len().to_le_bytes());
+        serial.extend(data);
         serial.extend_from_slice(Segments::EOC);
         if i >= image.metadata.colorspace.num_channels() {
             break;
@@ -101,8 +114,6 @@ pub fn encode(mut image: CompressedImage) -> Result<Vec<u8>, SerializeError> {
     serial.extend_from_slice(Segments::EOI);
     return Ok(serial);
 }
-
-type ChannelData = [Option<(Vec<AnsContext>, Vec<u8>, Vec<[f32;6]>)>; 3];
 
 pub fn decode(bytes: Vec<u8>) -> Result<CompressedImage, SerializeError> {
     let mut offset = 0;
@@ -120,7 +131,7 @@ pub fn decode(bytes: Vec<u8>) -> Result<CompressedImage, SerializeError> {
     let metadata = u32::from_le_bytes(bytes[offset..offset + 4].try_into()?);
     offset += 4;
 
-    let colorspace = ColorSpace::from_encoding((metadata >> 30 & 0b11) as u8)?; 
+    let colorspace = ColorSpace::from_encoding((metadata >> 30 & 0b11) as u8)?;
     let variant = FractalVariant::from_encoding((metadata >> 28 & 0b11) as u8)?;
 
     let channel_data = deserialize_channel_data(&bytes, offset)?;
@@ -136,37 +147,68 @@ pub fn decode(bytes: Vec<u8>) -> Result<CompressedImage, SerializeError> {
     })
 }
 
-fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<ChannelData, SerializeError> {
-    let mut channel_data: ChannelData = [None, None, None];
+fn deserialize_channel_data(
+    bytes: &Vec<u8>,
+    mut offset: usize,
+) -> Result<[Option<ChannelData>; 3], SerializeError> {
+    let mut channel_data = [None, None, None];
     let mut ans_contexts: Vec<AnsContext> = vec![];
     let mut encoded_bytes: Vec<u8> = vec![];
-    let mut value_prediction_params: Vec<[f32;6]> = vec![[0.;6];3];
+    let mut value_prediction_parameters: Vec<[f32; 6]> = vec![[0.; 6]; 3];
+    let mut width_prediction_parameters: Vec<[f32; 6]> = vec![[0.; 6]; 3];
     let mut i = 0;
     loop {
         match &bytes[offset..offset + 2] {
             Segments::PRD => {
                 offset += 2;
 
-                value_prediction_params[0] = bytes[offset..offset + 6*4]
+                value_prediction_parameters[0] = bytes[offset..offset + 6 * 4]
                     .chunks_exact(4)
                     .map(|e| f32::from_le_bytes(e.try_into().unwrap()))
                     .collect::<Vec<_>>()
-                    .try_into().unwrap();
-                offset += 6*4;
+                    .try_into()
+                    .unwrap();
+                offset += 6 * 4;
 
-                value_prediction_params[1] = bytes[offset..offset + 6*4]
+                value_prediction_parameters[1] = bytes[offset..offset + 6 * 4]
                     .chunks_exact(4)
                     .map(|e| f32::from_le_bytes(e.try_into().unwrap()))
                     .collect::<Vec<_>>()
-                    .try_into().unwrap();
-                offset += 6*4;
+                    .try_into()
+                    .unwrap();
+                offset += 6 * 4;
 
-                value_prediction_params[2] = bytes[offset..offset + 6*4]
+                value_prediction_parameters[2] = bytes[offset..offset + 6 * 4]
                     .chunks_exact(4)
                     .map(|e| f32::from_le_bytes(e.try_into().unwrap()))
                     .collect::<Vec<_>>()
-                    .try_into().unwrap();
-                offset += 6*4;
+                    .try_into()
+                    .unwrap();
+                offset += 6 * 4;
+
+                width_prediction_parameters[0] = bytes[offset..offset + 6 * 4]
+                    .chunks_exact(4)
+                    .map(|e| f32::from_le_bytes(e.try_into().unwrap()))
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap();
+                offset += 6 * 4;
+
+                width_prediction_parameters[1] = bytes[offset..offset + 6 * 4]
+                    .chunks_exact(4)
+                    .map(|e| f32::from_le_bytes(e.try_into().unwrap()))
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap();
+                offset += 6 * 4;
+
+                width_prediction_parameters[2] = bytes[offset..offset + 6 * 4]
+                    .chunks_exact(4)
+                    .map(|e| f32::from_le_bytes(e.try_into().unwrap()))
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap();
+                offset += 6 * 4;
             }
             Segments::EHD => {
                 offset += 2;
@@ -189,8 +231,7 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
             Segments::DAT => {
                 offset += 2;
 
-                let data_len =
-                    u64::from_le_bytes(bytes[offset..offset + 8].try_into()?) as usize;
+                let data_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into()?) as usize;
                 offset += 8;
 
                 let data = bytes[offset..offset + data_len as usize].to_vec();
@@ -201,8 +242,14 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
             Segments::EOC => {
                 offset += 2;
 
-                channel_data[i] = Some((ans_contexts, encoded_bytes, value_prediction_params));
-                value_prediction_params = vec![[0.;6];3];
+                channel_data[i] = Some(ChannelData {
+                    ans_contexts,
+                    data: encoded_bytes,
+                    value_prediction_parameters,
+                    width_prediction_parameters,
+                });
+                value_prediction_parameters = vec![[0.; 6]; 3];
+                width_prediction_parameters = vec![[0.; 6]; 3];
                 ans_contexts = vec![];
                 encoded_bytes = vec![];
                 i += 1;
@@ -210,6 +257,5 @@ fn deserialize_channel_data(bytes: &Vec<u8>, mut offset: usize) -> Result<Channe
             Segments::EOI => return Ok(channel_data),
             _other => return Err(SerializeError::MalformedImageBytes),
         }
-    } 
+    }
 }
-

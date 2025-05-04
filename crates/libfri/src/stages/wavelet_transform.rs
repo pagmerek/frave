@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::vec;
 
 use crate::encoder::EncoderOpts;
 use crate::fractal::{self, CENTERS, LITERALS};
@@ -88,59 +89,91 @@ impl Fractal {
         }
     }
 
-    fn get_sorted_neighbours(depth: u8) -> [Complex<i32>; 6] {
-        let mut vectors = Self::get_nearby_vectors(depth);
-        let rightmost = vectors.iter().max_by_key(|r| r.re).unwrap().clone();
-        let rightmost_angle = (rightmost.im as f32).atan2(rightmost.re as f32);
-
-        vectors.sort_by(|a, b| {
-            let mut angle1 = (a.im as f32).atan2(a.re as f32) - rightmost_angle;
-            if angle1 < 0. {
-                angle1 += 2. * std::f32::consts::PI;
-            }
-
-            let mut angle2 = (b.im as f32).atan2(b.re as f32) - rightmost_angle;
-            if angle2 < 0. {
-                angle2 += 2. * std::f32::consts::PI;
-            }
-            angle1.total_cmp(&angle2)
-        });
-        vectors
-    }
-
     pub fn get_neighbour_locations(&self) -> [Complex<i32>; 6] {
         let vectors = Self::get_nearby_vectors(self.depth);
         return vectors.map(|x| self.center + x).try_into().unwrap();
     }
 
-    pub fn get_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let vectors = Self::get_sorted_neighbours(depth);
-        center + vectors[3]
+    pub fn get_left(
+        center: Complex<i32>,
+        depth: u8,
+        global_position_map: &Vec<HashMap<Complex<i32>, Complex<i32>>>,
+    ) -> Complex<i32> {
+        let vectors = Self::get_nearby_vectors(depth);
+        center + vectors[4]
     }
 
-    pub fn get_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let vectors = Self::get_sorted_neighbours(depth);
-        center + vectors[0]
-    }
-
-    pub fn get_down_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let vectors = Self::get_sorted_neighbours(depth);
-        center + vectors[2]
-    }
-
-    pub fn get_down_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let vectors = Self::get_sorted_neighbours(depth);
+    pub fn get_right(
+        center: Complex<i32>,
+        depth: u8,
+        global_position_map: &Vec<HashMap<Complex<i32>, Complex<i32>>>,
+    ) -> Complex<i32> {
+        let vectors = Self::get_nearby_vectors(depth);
         center + vectors[1]
     }
 
-    pub fn get_up_right(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let vectors = Self::get_sorted_neighbours(depth);
-        center + vectors[5]
+    pub fn get_down_left(
+        center: Complex<i32>,
+        depth: u8,
+        global_position_map: &Vec<HashMap<Complex<i32>, Complex<i32>>>,
+    ) -> Complex<i32> {
+        let vectors = Self::get_nearby_vectors(depth);
+        if depth == 2
+            && !global_position_map[depth as usize].contains_key(&(center + vectors[3]))
+            && global_position_map[depth as usize].contains_key(&(center + Complex::new(1, 1)))
+        {
+            center + Complex::new(1, 1)
+        } else {
+            center + vectors[3]
+        }
     }
 
-    pub fn get_up_left(center: Complex<i32>, depth: u8) -> Complex<i32> {
-        let vectors = Self::get_sorted_neighbours(depth);
-        center + vectors[4]
+    pub fn get_down_right(
+        center: Complex<i32>,
+        depth: u8,
+        global_position_map: &Vec<HashMap<Complex<i32>, Complex<i32>>>,
+    ) -> Complex<i32> {
+        let vectors = Self::get_nearby_vectors(depth);
+        if depth == 2
+            && !global_position_map[depth as usize].contains_key(&(center + vectors[3]))
+            && global_position_map[depth as usize].contains_key(&(center + Complex::new(1, 1)))
+        {
+            center + Complex::new(1, 1) + vectors[1]
+        } else {
+            center + vectors[2]
+        }
+    }
+
+    pub fn get_up_right(
+        center: Complex<i32>,
+        depth: u8,
+        global_position_map: &Vec<HashMap<Complex<i32>, Complex<i32>>>,
+    ) -> Complex<i32> {
+        let vectors = Self::get_nearby_vectors(depth);
+        if depth == 2
+            && !global_position_map[depth as usize].contains_key(&(center + vectors[0]))
+            && global_position_map[depth as usize].contains_key(&(center + Complex::new(-1, -1)))
+        {
+            center + Complex::new(-1, -1)
+        } else {
+            center + vectors[0]
+        }
+    }
+
+    pub fn get_up_left(
+        center: Complex<i32>,
+        depth: u8,
+        global_position_map: &Vec<HashMap<Complex<i32>, Complex<i32>>>,
+    ) -> Complex<i32> {
+        let vectors = Self::get_nearby_vectors(depth);
+        if depth == 2
+            && !global_position_map[depth as usize].contains_key(&(center + vectors[0]))
+            && global_position_map[depth as usize].contains_key(&(center + Complex::new(-1, -1)))
+        {
+            center + Complex::new(-1, -1) + vectors[4]
+        } else {
+            center + vectors[5]
+        }
     }
 
     fn extract_coefficients(&mut self, raster_image: &RasterImage, depth: u8) {
@@ -241,12 +274,12 @@ fn get_hf_context_bucket(
     let position_in_image = fractal.image_positions[position];
     let parent_position_in_image = fractal.image_positions[position / 2];
     let neighbours = vec![
-        Fractal::get_left(parent_position_in_image, fractal.depth - parent_level as u8),
-        Fractal::get_up_left(parent_position_in_image, fractal.depth - parent_level as u8),
-        Fractal::get_up_right(parent_position_in_image, fractal.depth - parent_level as u8),
-        Fractal::get_right(parent_position_in_image, fractal.depth - parent_level as u8),
-        Fractal::get_down_left(parent_position_in_image, fractal.depth - parent_level as u8),
-        Fractal::get_down_right(parent_position_in_image, fractal.depth - parent_level as u8),
+        //Fractal::get_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        //Fractal::get_up_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        //Fractal::get_up_right(parent_position_in_image, fractal.depth - parent_level as u8),
+        //Fractal::get_right(parent_position_in_image, fractal.depth - parent_level as u8),
+        //Fractal::get_down_left(parent_position_in_image, fractal.depth - parent_level as u8),
+        //Fractal::get_down_right(parent_position_in_image, fractal.depth - parent_level as u8),
     ];
 
     let values: Vec<i32> = neighbours
@@ -490,7 +523,9 @@ impl WaveletImage {
         let mut first = center;
 
         let mut layer_seven_mod = 0;
-        if !global_position_map.contains_key(&(center + rev_row_dir)) && global_position_map.contains_key(&(center + Complex::new(-1,-1))) {
+        if !global_position_map.contains_key(&(center + rev_row_dir))
+            && global_position_map.contains_key(&(center + Complex::new(-1, -1)))
+        {
             layer_seven_mod = 1;
         }
         let mut last_seen = first;
@@ -503,12 +538,11 @@ impl WaveletImage {
                 if layer_seven_mod % 2 == 0 {
                     first += rev_row_dir
                 } else {
-                    first += Complex::new(-1,-1);
+                    first += Complex::new(-1, -1);
                 }
-                layer_seven_mod+=1;
+                layer_seven_mod += 1;
             }
         }
-
 
         // Find first row
         loop {
@@ -543,9 +577,9 @@ impl WaveletImage {
                     if layer_seven_mod % 2 == 0 {
                         first += rev_row_dir
                     } else {
-                        first += Complex::new(-1,-1);
+                        first += Complex::new(-1, -1);
                     }
-                    layer_seven_mod+=1;
+                    layer_seven_mod += 1;
                 }
             }
         }
@@ -562,10 +596,8 @@ impl WaveletImage {
             }
         }
         first = last_seen;
-        //dbg!(first);
-        //
-        //dbg!(row_dir, col_dir);
-        layer_seven_mod=1;
+        layer_seven_mod = 1;
+
         // Fill plane in sorted order
         let mut plane: Vec<Complex<i32>> = Vec::new();
         'outer: loop {
@@ -588,14 +620,13 @@ impl WaveletImage {
                 first += row_dir;
             } else {
                 if layer_seven_mod % 2 == 0 {
-                    first += Complex::new(1,1);
+                    first += Complex::new(1, 1);
                 } else {
                     first += row_dir
                 }
-                layer_seven_mod+=1;
+                layer_seven_mod += 1;
             }
             while (!global_position_map.contains_key(&first)) {
-                //println!("FORTRACK: {} {}", first.re, first.im);
                 first += col_dir;
                 if (!Self::is_pos_in_row_boundary(
                     &first, &row_dir, min_real, max_real, min_imag, max_imag,
@@ -610,18 +641,14 @@ impl WaveletImage {
                     && first.re <= max_real
                     && first.re >= min_real)
                 {
-                    //println!("BACKTRACK: {} {}", first.re, first.im);
                     first += rev_col_dir;
 
                     if global_position_map.contains_key(&first) {
-                        //println!("BACKTRACK SOME: {} {}", first.re, first.im);
                         last_seen = first;
                     }
                 }
                 first = last_seen;
             }
-
-            //println!("NEXT_ROW, size of last: {}", cnt);
         }
         plane
     }
@@ -657,7 +684,7 @@ impl WaveletImage {
             .unwrap()
             .im;
 
-        let mut sorted_fractalwise: [Vec<Complex<i32>>; 9] = Default::default();
+        let mut sorted_fractalwise: [Vec<Complex<i32>>; BASE_FRAC_DEPTH as usize] = Default::default();
         let center = Complex::<i32>::new(width as i32 / 2, height as i32 / 2);
 
         for level in (0..BASE_FRAC_DEPTH) {

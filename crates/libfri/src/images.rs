@@ -111,7 +111,14 @@ impl RasterImage {
     }
 }
 
+pub struct ChannelData {
+   pub ans_contexts: Vec<AnsContext>,
+   pub data: Vec<u8>,
+   pub value_prediction_parameters: Vec<[f32;6]>,
+   pub width_prediction_parameters: Vec<[f32;6]>,
+}
+
 pub struct CompressedImage {
     pub metadata: ImageMetadata,
-    pub channel_data: [Option<(Vec<AnsContext>, Vec<u8>, Vec<[f32;6]>)>; 3],
+    pub channel_data: [Option<ChannelData>; 3],
 }
